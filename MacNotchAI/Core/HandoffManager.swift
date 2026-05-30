@@ -27,6 +27,7 @@ struct HandoffManager {
     static func providerName(_ type: AIProviderType? = nil) -> String {
         switch type ?? currentProviderType() {
         case .groq:      return "Groq"
+        case .gemini:    return "Gemini"
         case .anthropic: return "Claude"
         case .openai:    return "ChatGPT"
         case .ollama:    return "Ollama"
@@ -36,6 +37,7 @@ struct HandoffManager {
     static func providerIcon(_ type: AIProviderType? = nil) -> String {
         switch type ?? currentProviderType() {
         case .groq:      return "bolt.fill"
+        case .gemini:    return "sparkles"
         case .anthropic: return "sparkle"
         case .openai:    return "brain"
         case .ollama:    return "server.rack"
@@ -90,6 +92,8 @@ struct HandoffManager {
             }
         case .groq:
             open("https://console.groq.com/playground")
+        case .gemini:
+            open("https://gemini.google.com/app")
         case .ollama:
             // Open WebUI (localhost:3000) is the most popular Ollama front-end.
             // Falls back to the Ollama API docs page if nothing is running locally.

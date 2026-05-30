@@ -49,9 +49,27 @@ class OverlayWindow: NSPanel {
 
     // MARK: - Positioning
 
+    // Remembered so reapplyUserOffset() can recompute the frame at the current
+    // size/anchor when the user drags the grabber, without resizing the window.
+    private var lastSize: CGSize = CGSize(width: 240, height: 68)
+    private var lastAnchorAtNotchCenter = false
+
     /// Place the window at the correct notch position instantly — call BEFORE show().
     func place(size: CGSize, anchorAtNotchCenter: Bool) {
-        setFrame(notchFrame(for: size, anchorAtNotchCenter: anchorAtNotchCenter), display: false)
+        lastSize = size
+        lastAnchorAtNotchCenter = anchorAtNotchCenter
+        setFrame(notchFrame(for: size, anchorAtNotchCenter: anchorAtNotchCenter,
+                            offset: OverlayViewModel.shared.userDragOffset), display: false)
+    }
+
+    /// Re-apply the notch frame at the existing size with an explicit drag offset.
+    /// Called synchronously as the user drags (offset changes, size doesn't).
+    /// The offset is passed in rather than read from the VM because this runs from
+    /// the @Published willSet, before the stored property has been committed.
+    func reapplyUserOffset(_ offset: CGSize) {
+        let f = notchFrame(for: lastSize, anchorAtNotchCenter: lastAnchorAtNotchCenter, offset: offset)
+        guard frame.origin != f.origin else { return }
+        setFrameOrigin(f.origin)
     }
 
     /// Resize and reposition the window instantly.
@@ -65,7 +83,10 @@ class OverlayWindow: NSPanel {
     /// spring modifiers inside the content view, so the instant frame change is invisible
     /// to the user — they only see the black content shape morphing smoothly.
     func animateTo(size: CGSize, anchorAtNotchCenter: Bool) {
-        let newFrame = notchFrame(for: size, anchorAtNotchCenter: anchorAtNotchCenter)
+        lastSize = size
+        lastAnchorAtNotchCenter = anchorAtNotchCenter
+        let newFrame = notchFrame(for: size, anchorAtNotchCenter: anchorAtNotchCenter,
+                                  offset: OverlayViewModel.shared.userDragOffset)
         guard frame != newFrame else { return }
         // display: false — do NOT trigger an immediate AppKit redraw here.
         // display: true causes AppKit to start a layout pass synchronously inside
@@ -78,7 +99,7 @@ class OverlayWindow: NSPanel {
 
     // MARK: - Private helpers
 
-    private func notchFrame(for size: CGSize, anchorAtNotchCenter: Bool) -> NSRect {
+    private func notchFrame(for size: CGSize, anchorAtNotchCenter: Bool, offset: CGSize) -> NSRect {
         // NSScreen.main is transiently nil during space/screen transitions.
         // Fall through the chain rather than returning the current (possibly
         // zero-size) frame — a zero-size setFrame triggers a layout pass with
@@ -89,8 +110,8 @@ class OverlayWindow: NSPanel {
         else { return frame }
 
         let notchBottomY: CGFloat = 37
-        let y = screen.frame.height - notchBottomY - size.height
-        let x: CGFloat
+        var y = screen.frame.height - notchBottomY - size.height
+        var x: CGFloat
         if anchorAtNotchCenter {
             // Keep the notch centre at ~39 % from the window's left edge —
             // the same visual relationship at every UI scale.
@@ -99,6 +120,20 @@ class OverlayWindow: NSPanel {
         } else {
             x = (screen.frame.width - size.width) / 2
         }
+
+        // Apply the user's manual drag offset on TOP of the notch-anchored origin.
+        // Screen coords are bottom-up, so +offset.height moves the window up.
+        // The offset is reset to .zero on each fresh drop, so the default origin
+        // stays pinned to the notch — only the active session can be nudged.
+        x += offset.width
+        y += offset.height
+
+        // Clamp so the window can never be dragged fully off-screen (keep ≥ 80 pt
+        // of width on screen and the top edge below the menu bar region).
+        let vf = screen.visibleFrame
+        x = min(max(x, vf.minX - size.width + 80), vf.maxX - 80)
+        y = min(max(y, vf.minY + 20), screen.frame.height - notchBottomY - size.height)
+
         return NSRect(origin: CGPoint(x: x, y: y), size: size)
     }
 }

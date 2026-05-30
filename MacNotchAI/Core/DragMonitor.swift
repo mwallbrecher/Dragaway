@@ -129,7 +129,10 @@ class DragMonitor: ObservableObject {
         lastDragChangeCount = count
 
         let hasDrag = hasFile(on: pb)
-        if hasDrag, !isDraggingFile {
+        // Optional hotkey gate: when the user has configured a modifier/spacebar
+        // combo, the pill only appears if that combo is held as the drag starts.
+        // With nothing configured isHotkeyHeld() is always true (normal behaviour).
+        if hasDrag, !isDraggingFile, HotkeyManager.shared.isHotkeyHeld() {
             isDraggingFile = true
             startPolling()
         } else if !hasDrag {

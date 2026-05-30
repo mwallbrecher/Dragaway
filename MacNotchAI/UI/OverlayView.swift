@@ -1,4 +1,5 @@
 import SwiftUI
+import AppKit
 
 // MARK: - Root overlay view
 
@@ -96,6 +97,32 @@ struct OverlayView: View {
                 .animation(.spring(response: 0.35, dampingFraction: 0.72),
                             value: vm.pendingSecondFileURL != nil)
                 .liquidGlass(cornerRadius: cornerRadius, tintOpacity: 0.60)
+                // Elastic landing deform on expand/collapse. Anchor .top pins the
+                // notch edge so only the BOTTOM edge reacts. Purely visual (a
+                // scaleEffect — NSView bounds + window size unchanged), so it can
+                // overbounce without re-entering the constraint solver.
+                //
+                // Timing matters: the keyframe HOLDS at 1.0 for the first ~0.26 s
+                // while the monotonic easeInOut height reflow carries the bottom
+                // edge to its final position. Only THEN does it squash (impact) and
+                // rebound past 1.0 (stretch) before settling — so the overshoot reads
+                // as the bottom edge landing, not as the card deforming on the way.
+                .keyframeAnimator(initialValue: 1.0, trigger: vm.isChipsExpanded) { card, scaleY in
+                    card.scaleEffect(x: 1.0, y: scaleY, anchor: .top)
+                } keyframes: { _ in
+                    KeyframeTrack {
+                        LinearKeyframe(1.0, duration: 0.20)   // wait out the (faster) reflow
+                        CubicKeyframe(0.94, duration: 0.07)   // squash on impact
+                        SpringKeyframe(1.0, duration: 0.32,
+                                       spring: Spring(response: 0.26, dampingRatio: 0.62))
+                    }
+                }
+                // Whole card is a window-drag handle (low-priority gesture, so
+                // buttons / prompt field / scroll view / file drag-out still win).
+                .windowDrag()
+                // Movable-window grabber — thin line at top center that expands on
+                // hover/drag. A visible affordance on top of the whole-card drag.
+                .overlay(alignment: .top) { WindowGrabber() }
                 .transition(.identity)
             }
         }
@@ -119,10 +146,16 @@ struct OverlayView: View {
         //          → isAtFullScale flips true, entry spring re-plays.
         // NOTE: scaleEffect is a purely visual transform — NSView bounds and
         // the drag hitbox are always the full 288×96 canvas.
-        .scaleEffect(x: isAtFullScale ? 1.0 : 0.78,
+        //
+        // X depends ONLY on `appeared`: it pops 0.78 → 1.0 on entry but HOLDS at 1.0
+        // during collapse (isCollapsing never touches it). That turns the close
+        // animation into a clean vertical squish into the notch rather than a
+        // diagonal corner-pull, which is what read as overshoot before. Y still rides
+        // isAtFullScale — up on entry, down to a sliver on collapse.
+        .scaleEffect(x: appeared ? 1.0 : 0.78,
                      y: isAtFullScale ? 1.0 : 0.02,
                      anchor: .top)
-        .animation(.spring(response: 0.36, dampingFraction: 0.58), value: appeared)
+        .animation(.spring(response: 0.30, dampingFraction: 0.85), value: appeared)
 
         // ── Jelly wobble (stage 1 only) ──────────────────────────────────────
         // Driven by direct withAnimation calls in OverlayViewModel. No Tasks here.
@@ -133,12 +166,95 @@ struct OverlayView: View {
             y: vm.stage.tag == 0 ? vm.jellyY : 1.0,
             anchor: .top
         )
-        .animation(.spring(response: 0.30, dampingFraction: 0.70), value: vm.stage.tag)
+        .animation(.spring(response: 0.30, dampingFraction: 1.0), value: vm.stage.tag)
 
         // Trigger entry animation. onAppear fires before the first committed frame
         // so SwiftUI batches the state change and the animation together — no Task
         // scheduling, no async race, no multi-phase timing.
         .onAppear { appeared = true }
+    }
+}
+
+// MARK: - Movable-window grabber
+
+/// Thin line centered at the top edge of the stage-2/3 card. Collapsed by default;
+/// expands + brightens on hover or while dragging. Dragging it moves the window by
+/// writing vm.userDragOffset (applied to the window origin in OverlayWindow).
+/// Deliberately NOT isMovableByWindowBackground — that would hijack file drops.
+private struct WindowGrabber: View {
+    @Environment(\.uiScale) private var scale
+    @State private var isHovered = false
+    @State private var isDragging = false
+
+    var body: some View {
+        let active = isHovered || isDragging
+        VStack(spacing: 0) {
+            Capsule(style: .continuous)
+                .fill(Color.white.opacity(active ? 0.55 : 0.20))
+                .frame(width: (active ? 52 : 30) * scale, height: 4 * scale)
+                .animation(.spring(response: 0.26, dampingFraction: 0.82), value: active)
+            Spacer(minLength: 0)
+        }
+        // Tall, full-width hit strip so the line is easy to grab without stealing
+        // clicks from the header buttons further down.
+        .frame(maxWidth: .infinity)
+        .frame(height: 16 * scale)
+        .padding(.top, 5 * scale)
+        .contentShape(Rectangle())
+        .onHover { isHovered = $0 }
+        .windowDrag(isDragging: $isDragging)
+        .help("Drag to move")
+    }
+}
+
+// MARK: - Window-drag gesture
+
+/// Drags the overlay window by writing vm.userDragOffset. Attach to the grabber
+/// AND the whole card so the user can move the window from anywhere on it.
+///
+/// Tracks the ABSOLUTE cursor position via NSEvent.mouseLocation (screen coords,
+/// y-up) rather than the DragGesture's translation. SwiftUI's .global translation
+/// is measured relative to the window — and the window is moving as we drag — which
+/// created a feedback loop (jitter/glitch). Screen coordinates are independent of
+/// the window, so the move tracks the cursor 1:1 with no drift.
+///
+/// Uses .gesture (low priority), so child controls — buttons, the prompt field, the
+/// scroll view, and file-pill drag-out — keep their own gestures; the window only
+/// moves when the drag starts on empty card surface.
+private struct WindowDragModifier: ViewModifier {
+    @ObservedObject private var vm = OverlayViewModel.shared
+    @Binding var isDragging: Bool
+    @State private var anchorMouse: CGPoint? = nil
+    @State private var startOffset: CGSize = .zero
+
+    func body(content: Content) -> some View {
+        content.gesture(
+            DragGesture(minimumDistance: 2)
+                .onChanged { _ in
+                    let mouse = NSEvent.mouseLocation
+                    if anchorMouse == nil {
+                        anchorMouse = mouse
+                        startOffset = vm.userDragOffset
+                        isDragging  = true
+                    }
+                    let anchor = anchorMouse ?? mouse
+                    vm.userDragOffset = CGSize(
+                        width:  startOffset.width  + (mouse.x - anchor.x),
+                        height: startOffset.height + (mouse.y - anchor.y)
+                    )
+                }
+                .onEnded { _ in
+                    anchorMouse = nil
+                    isDragging  = false
+                }
+        )
+    }
+}
+
+private extension View {
+    /// Make this view a drag handle for the overlay window.
+    func windowDrag(isDragging: Binding<Bool> = .constant(false)) -> some View {
+        modifier(WindowDragModifier(isDragging: isDragging))
     }
 }
 
@@ -197,7 +313,13 @@ private struct ChipsColumnView: View {
     let provider: any AIProvider
     let closeNS: Namespace.ID
     @ObservedObject private var vm = OverlayViewModel.shared
+    @ObservedObject private var store = PromptStore.shared
     @Environment(\.uiScale) private var scale
+
+    // Inline "add custom prompt" composer state (Custom tab "+" row).
+    @State private var isAddingCustom = false
+    @State private var newCustom = ""
+    @FocusState private var customFieldFocused: Bool
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10 * scale) {
@@ -205,28 +327,20 @@ private struct ChipsColumnView: View {
                 .zIndex(100)   // floating name badge must render above chips below it
 
             if vm.isChipsExpanded {
-                Text("Suggested")
-                    .font(.system(size: 11 * scale, weight: .medium))
-                    .foregroundColor(.white.opacity(0.35))
+                chipsTabBar
                     .transition(.asymmetric(
                         // Delay insertion so the window finishes resizing before
-                        // text pops in — prevents content appearing in a too-small frame.
-                        insertion: .opacity.animation(.easeOut(duration: 0.14).delay(0.18)),
-                        removal:   .opacity.animation(.easeIn(duration: 0.08))
+                        // the bar pops in — prevents content appearing in a too-small frame.
+                        insertion: .opacity.animation(.easeOut(duration: 0.12).delay(0.13)),
+                        removal:   .opacity.animation(.easeIn(duration: 0.07))
                     ))
 
-                VStack(alignment: .leading, spacing: 6 * scale) {
-                    ForEach(actions) { action in
-                        ActionChip(title: action.rawValue, isLoading: false) {
-                            runAction(action)
-                        }
-                    }
-                }
-                .transition(.asymmetric(
-                    insertion: .opacity.combined(with: .move(edge: .top))
-                                       .animation(.spring(response: 0.28, dampingFraction: 0.75).delay(0.20)),
-                    removal:   .opacity.animation(.easeIn(duration: 0.08))
-                ))
+                chipsTabContent
+                    .transition(.asymmetric(
+                        insertion: .opacity.combined(with: .move(edge: .top))
+                                           .animation(.spring(response: 0.28, dampingFraction: 0.7).delay(0.15)),
+                        removal:   .opacity.animation(.easeIn(duration: 0.07))
+                    ))
             }
 
             PromptField(text: $vm.customPrompt, onSubmit: runCustomPrompt)
@@ -259,9 +373,10 @@ private struct ChipsColumnView: View {
         let additionalURLs = vm.additionalFileURLs
         Task {
             do {
-                let (content, imageURL) = try await buildMultiFileContent(
+                let (content, imageURL, truncated) = try await buildMultiFileContent(
                     primary: fileURL, additional: additionalURLs)
                 let text = try await provider.complete(action: action, content: content, imageURL: imageURL)
+                OverlayViewModel.shared.contentTruncated = truncated
                 setStage(.result(url: fileURL, action: action, text: text))
             } catch {
                 setStage(.error(url: fileURL, message: error.localizedDescription))
@@ -269,9 +384,14 @@ private struct ChipsColumnView: View {
         }
     }
 
-    private func runCustomPrompt() {
-        let prompt = vm.customPrompt.trimmingCharacters(in: .whitespaces)
+    private func runCustomPrompt() { runCustomPromptText(vm.customPrompt) }
+
+    /// Run an arbitrary free-text prompt against the current session and log it to
+    /// History. Used by the prompt field (typed) and by tapping a History/Custom chip.
+    private func runCustomPromptText(_ raw: String) {
+        let prompt = raw.trimmingCharacters(in: .whitespaces)
         guard !prompt.isEmpty else { return }
+        store.recordHistory(prompt)        // log every run to the History tab
         vm.customPrompt = ""
         vm.cachedResult = nil
         let action = AIAction.freeform
@@ -279,12 +399,13 @@ private struct ChipsColumnView: View {
         let additionalURLs = vm.additionalFileURLs
         Task {
             do {
-                let (baseContent, imageURL) = try await buildMultiFileContent(
+                let (baseContent, imageURL, truncated) = try await buildMultiFileContent(
                     primary: fileURL, additional: additionalURLs)
                 let finalContent = imageURL != nil
                     ? "Question: \(prompt)"
                     : "Question: \(prompt)\n\n--- Documents ---\n\(baseContent)"
                 let text = try await provider.complete(action: action, content: finalContent, imageURL: imageURL)
+                OverlayViewModel.shared.contentTruncated = truncated
                 setStage(.result(url: fileURL, action: action, text: text))
             } catch {
                 setStage(.error(url: fileURL, message: error.localizedDescription))
@@ -292,11 +413,153 @@ private struct ChipsColumnView: View {
         }
     }
 
+    // ── Prompt tabs: Suggested / History / Custom ─────────────────────────────
+
+    /// Logical (unclamped) row count of the active tab — must match the value
+    /// AppDelegate.resizeOverlay uses so the window height fits the content region.
+    private var currentRowCount: Int {
+        ChipsLayout.rows(for: vm.chipsTab,
+                         suggested: actions.count,
+                         history: store.history.count,
+                         custom: store.customPrompts.count)
+    }
+
+    private var chipsTabBar: some View {
+        HStack(spacing: 6 * scale) {
+            tabButton(.suggested, icon: "sparkles.2",        help: "Suggested")
+            tabButton(.history,   icon: "list.bullet",       help: "History")
+            tabButton(.custom,    icon: "slider.vertical.3",  help: "Custom prompts")
+            Spacer(minLength: 0)
+        }
+        .frame(height: ChipsLayout.tabBarHeight * scale)
+    }
+
+    @ViewBuilder
+    private func tabButton(_ tab: OverlayViewModel.ChipsTab, icon: String, help: String) -> some View {
+        let selected = vm.chipsTab == tab
+        Button {
+            guard vm.chipsTab != tab else { return }
+            isAddingCustom = false          // close any open composer when switching
+            withAnimation(.easeInOut(duration: 0.22)) { vm.chipsTab = tab }
+        } label: {
+            Image(systemName: icon)
+                .font(.system(size: 11 * scale, weight: .semibold))
+                .foregroundColor(selected ? .white : .white.opacity(0.40))
+                .frame(width: 34 * scale, height: 24 * scale)
+                .background(
+                    RoundedRectangle(cornerRadius: 7 * scale, style: .continuous)
+                        .fill(Color.white.opacity(selected ? 0.12 : 0.0))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 7 * scale, style: .continuous)
+                                .strokeBorder(Color.white.opacity(selected ? 0.16 : 0.0), lineWidth: 0.5)
+                        )
+                )
+        }
+        .buttonStyle(.plain)
+        .help(help)
+    }
+
+    private var chipsTabContent: some View {
+        ScrollView(.vertical, showsIndicators: false) {
+            VStack(alignment: .leading, spacing: ChipsLayout.rowSpacing * scale) {
+                switch vm.chipsTab {
+                case .suggested:
+                    ForEach(actions) { action in
+                        ActionChip(title: action.rawValue, isLoading: false) { runAction(action) }
+                    }
+                case .history:
+                    if store.history.isEmpty {
+                        emptyHint("No prompts yet — ask anything below.")
+                    } else {
+                        ForEach(store.history, id: \.self) { p in
+                            ActionChip(title: p, isLoading: false) { runCustomPromptText(p) }
+                        }
+                    }
+                case .custom:
+                    ForEach(store.customPrompts, id: \.self) { p in
+                        ActionChip(title: p, isLoading: false) { runCustomPromptText(p) }
+                    }
+                    customAddRow
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .frame(height: ChipsLayout.contentHeight(rows: currentRowCount) * scale, alignment: .top)
+    }
+
+    private func emptyHint(_ text: String) -> some View {
+        Text(text)
+            .font(.system(size: 11 * scale))
+            .foregroundColor(.white.opacity(0.30))
+            .frame(maxWidth: .infinity, minHeight: ChipsLayout.rowStride * scale, alignment: .leading)
+    }
+
+    @ViewBuilder
+    private var customAddRow: some View {
+        if isAddingCustom {
+            HStack(spacing: 6 * scale) {
+                TextField("New prompt…", text: $newCustom)
+                    .textFieldStyle(.plain)
+                    .font(.system(size: 12 * scale))
+                    .foregroundColor(.white.opacity(0.85))
+                    .focused($customFieldFocused)
+                    .onSubmit(commitCustom)
+                Button(action: commitCustom) {
+                    Image(systemName: "checkmark")
+                        .font(.system(size: 10 * scale, weight: .bold))
+                        .foregroundColor(.white)
+                        .frame(width: 22 * scale, height: 22 * scale)
+                        .background(Circle().fill(Color.blue))
+                }
+                .buttonStyle(.plain)
+                .disabled(newCustom.trimmingCharacters(in: .whitespaces).isEmpty)
+            }
+            .padding(.leading, 12 * scale)
+            .padding(.trailing, 5 * scale)
+            .padding(.vertical, 4 * scale)
+            .background(
+                Capsule(style: .continuous)
+                    .fill(Color.white.opacity(0.06))
+                    .overlay(Capsule(style: .continuous)
+                        .strokeBorder(Color.white.opacity(0.12), lineWidth: 0.5))
+            )
+        } else {
+            Button {
+                newCustom = ""
+                withAnimation(.easeInOut(duration: 0.2)) { isAddingCustom = true }
+                customFieldFocused = true
+            } label: {
+                HStack(spacing: 6 * scale) {
+                    Image(systemName: "plus")
+                        .font(.system(size: 11 * scale, weight: .bold))
+                    Text("Add prompt")
+                        .font(.system(size: 12 * scale, weight: .medium))
+                }
+                .foregroundColor(.white.opacity(0.55))
+                .padding(.horizontal, 14 * scale)
+                .padding(.vertical, 8 * scale)
+                .background(
+                    Capsule(style: .continuous)
+                        .strokeBorder(style: StrokeStyle(lineWidth: 0.5, dash: [3, 3]))
+                        .foregroundColor(.white.opacity(0.18))
+                )
+            }
+            .buttonStyle(.plain)
+        }
+    }
+
+    private func commitCustom() {
+        let t = newCustom.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !t.isEmpty { withAnimation(.easeInOut(duration: 0.22)) { store.addCustom(t) } }
+        newCustom = ""
+        withAnimation(.easeInOut(duration: 0.2)) { isAddingCustom = false }
+    }
+
     /// Set stage safely: always deferred one runloop tick so the change
     /// never fires inside an active AppKit or SwiftUI layout pass.
     private func setStage(_ stage: OverlayViewModel.Stage) {
         DispatchQueue.main.async {
-            withAnimation(.spring(response: 0.38, dampingFraction: 0.62)) {
+            withAnimation(.spring(response: 0.32, dampingFraction: 1.0)) {
                 OverlayViewModel.shared.stage = stage
             }
         }
@@ -390,6 +653,19 @@ private struct TwoColumnView: View {
 
             resultCard
 
+            // Truncation notice — the source was larger than the extractor's cap,
+            // so only the leading slice was sent to the model.
+            if case .result = vm.stage, vm.contentTruncated {
+                HStack(spacing: 5 * scale) {
+                    Image(systemName: "scissors")
+                        .font(.system(size: 9 * scale, weight: .semibold))
+                    Text("Large file — analysed the first part only.")
+                        .font(.system(size: 10 * scale, weight: .medium))
+                }
+                .foregroundColor(.white.opacity(0.45))
+                .transition(.opacity)
+            }
+
             PromptField(text: $vm.customPrompt, onSubmit: runCustomPrompt)
 
             if case .result = vm.stage {
@@ -400,7 +676,7 @@ private struct TwoColumnView: View {
                         .foregroundColor(.white.opacity(0.35))
                     Spacer(minLength: 0)
                     Button {
-                        withAnimation(.spring(response: 0.32, dampingFraction: 0.65)) {
+                        withAnimation(.easeInOut(duration: 0.22)) {
                             vm.isFollowupsExpanded.toggle()
                         }
                     } label: {
@@ -430,7 +706,7 @@ private struct TwoColumnView: View {
                         // Delay so chips pop in after the ScrollView has shrunk
                         // to its capped height and the layout has stabilised.
                         insertion: .opacity.combined(with: .move(edge: .top))
-                                           .animation(.spring(response: 0.26, dampingFraction: 0.75).delay(0.18)),
+                                           .animation(.spring(response: 0.26, dampingFraction: 0.75).delay(0.14)),
                         removal:   .opacity.animation(.easeIn(duration: 0.08))
                     ))
                 }
@@ -458,7 +734,7 @@ private struct TwoColumnView: View {
             // Back to stage 2 (chips) — saves result so → can restore it
             ResultIconButton(systemName: "arrow.left", tooltip: "Back to prompts") {
                 let snapshot = vm.stage   // capture .result(...) before navigation
-                withAnimation(.spring(response: 0.38, dampingFraction: 0.62)) {
+                withAnimation(.spring(response: 0.32, dampingFraction: 1.0)) {
                     OverlayViewModel.shared.navigateBackToChips(savingResult: snapshot, url: fileURL)
                 }
             }
@@ -512,7 +788,7 @@ private struct TwoColumnView: View {
             // When follow-ups are visible it's capped so chips stay on screen.
             .frame(maxHeight: vm.isFollowupsExpanded ? 200 * scale : .infinity)
             .layoutPriority(1)
-            .animation(.spring(response: 0.32, dampingFraction: 0.75), value: vm.isFollowupsExpanded)
+            .animation(.easeInOut(duration: 0.22), value: vm.isFollowupsExpanded)
             .liquidGlass(cornerRadius: 10 * scale, tintOpacity: 0.60)
 
         case .error(_, let msg):
@@ -553,9 +829,10 @@ private struct TwoColumnView: View {
         let additionalURLs = vm.additionalFileURLs
         Task {
             do {
-                let (content, imageURL) = try await buildMultiFileContent(
+                let (content, imageURL, truncated) = try await buildMultiFileContent(
                     primary: fileURL, additional: additionalURLs)
                 let text = try await provider.complete(action: action, content: content, imageURL: imageURL)
+                OverlayViewModel.shared.contentTruncated = truncated
                 setStage(.result(url: fileURL, action: action, text: text))
             } catch {
                 setStage(.error(url: fileURL, message: error.localizedDescription))
@@ -566,6 +843,7 @@ private struct TwoColumnView: View {
     private func runCustomPrompt() {
         let prompt = vm.customPrompt.trimmingCharacters(in: .whitespaces)
         guard !prompt.isEmpty else { return }
+        PromptStore.shared.recordHistory(prompt)   // log to History tab
         vm.customPrompt = ""
         vm.cachedResult = nil
         let action = AIAction.freeform
@@ -573,12 +851,13 @@ private struct TwoColumnView: View {
         let additionalURLs = vm.additionalFileURLs
         Task {
             do {
-                let (baseContent, imageURL) = try await buildMultiFileContent(
+                let (baseContent, imageURL, truncated) = try await buildMultiFileContent(
                     primary: fileURL, additional: additionalURLs)
                 let finalContent = imageURL != nil
                     ? "Question: \(prompt)"
                     : "Question: \(prompt)\n\n--- Documents ---\n\(baseContent)"
                 let text = try await provider.complete(action: action, content: finalContent, imageURL: imageURL)
+                OverlayViewModel.shared.contentTruncated = truncated
                 setStage(.result(url: fileURL, action: action, text: text))
             } catch {
                 setStage(.error(url: fileURL, message: error.localizedDescription))
@@ -592,7 +871,7 @@ private struct TwoColumnView: View {
             // Collapse follow-ups whenever a fresh result arrives so the section
             // starts closed and the user can expand it on demand.
             if case .result = stage { OverlayViewModel.shared.isFollowupsExpanded = false }
-            withAnimation(.spring(response: 0.38, dampingFraction: 0.62)) {
+            withAnimation(.spring(response: 0.32, dampingFraction: 1.0)) {
                 OverlayViewModel.shared.stage = stage
             }
         }
@@ -624,7 +903,11 @@ private struct FileHeaderView: View {
             // ── Collapse suggestions toggle (chips stage only) ───────────────
             if vm.stage.tag == 1 {
                 Button {
-                    withAnimation(.spring(response: 0.32, dampingFraction: 0.65)) {
+                    // Height reflow stays monotonic (no Y-jump). The elastic
+                    // overbounce is the keyframeAnimator on the card (triggered by
+                    // isChipsExpanded) — it holds, then squashes when the bottom
+                    // edge lands and rebounds. See the .keyframeAnimator below.
+                    withAnimation(.easeInOut(duration: 0.22)) {
                         vm.isChipsExpanded.toggle()
                     }
                 } label: {
@@ -652,7 +935,7 @@ private struct FileHeaderView: View {
             // the previous AI answer without re-running the request.
             if vm.stage.tag == 1, let cached = vm.cachedResult {
                 Button {
-                    withAnimation(.spring(response: 0.38, dampingFraction: 0.62)) {
+                    withAnimation(.spring(response: 0.32, dampingFraction: 1.0)) {
                         OverlayViewModel.shared.stage = cached
                         OverlayViewModel.shared.cachedResult = nil
                     }
@@ -1184,7 +1467,7 @@ private struct HandoffButton: View {
             let providerName = HandoffManager.providerName()
             if case .result = vm.stage {
                 // Navigate to stage 2 instantly — the button disappears with the card.
-                withAnimation(.spring(response: 0.42, dampingFraction: 0.58)) {
+                withAnimation(.spring(response: 0.40, dampingFraction: 0.82)) {
                     vm.navigateBackToChips(savingResult: vm.stage, url: fileURL)
                     vm.isChipsExpanded = false
                 }
@@ -1195,10 +1478,10 @@ private struct HandoffButton: View {
                         vm.handoffProviderName = providerName
                     }
                 }
-                // Wobbly spring fade-out after 6 s — low damping produces a gentle
-                // oscillation as the pill dissolves, matching the entry spring feel.
+                // Calm fade-out after 6 s — well-damped so the pill dissolves
+                // cleanly without oscillating.
                 DispatchQueue.main.asyncAfter(deadline: .now() + 6.0) {
-                    withAnimation(.spring(response: 0.45, dampingFraction: 0.52)) {
+                    withAnimation(.spring(response: 0.40, dampingFraction: 0.82)) {
                         vm.handoffProviderName = nil
                     }
                 }
@@ -1357,39 +1640,44 @@ struct ActionChip: View {
 /// Extracts and joins content from all files in the session.
 /// Single-file behaviour is unchanged — exactly the same strings as before.
 /// Multi-file: each file's content is preceded by a filename header.
-/// Returns (content: String, imageURL: URL?) where imageURL is only set
-/// for a SINGLE-image session (no additionals) so vision models work.
+/// Returns (content, imageURL, truncated): imageURL is only set for a SINGLE-image
+/// session (no additionals) so vision models work; `truncated` is true when any
+/// file's content was cut to fit the extractor's char/page cap.
 private func buildMultiFileContent(
     primary fileURL: URL,
     additional additionalURLs: [URL]
-) async throws -> (content: String, imageURL: URL?) {
+) async throws -> (content: String, imageURL: URL?, truncated: Bool) {
     let allURLs = [fileURL] + additionalURLs
 
     // ── Single image (no additionals) ─────────────────────────────────────────
     if allURLs.count == 1, FileInspector.isImageFile(allURLs[0]) {
-        return ("Analyse the attached image.", allURLs[0])
+        return ("Analyse the attached image.", allURLs[0], false)
     }
 
     // ── Single non-image ──────────────────────────────────────────────────────
     if allURLs.count == 1 {
-        return (try await FileContentExtractor.extract(from: allURLs[0]), nil)
+        let result = try await FileContentExtractor.extract(from: allURLs[0])
+        return (result.text, nil, result.truncated)
     }
 
     // ── Multiple files ────────────────────────────────────────────────────────
     var sections: [String] = []
+    var anyTruncated = false
     for url in allURLs {
         let body: String
         if FileInspector.isImageFile(url) {
             // Vision analysis is only available for single-image sessions;
             // in multi-file mode describe the image by name / context.
             body = "[Image: \(url.lastPathComponent) — visual description not available in multi-file mode]"
+        } else if let result = try? await FileContentExtractor.extract(from: url) {
+            body = result.text
+            anyTruncated = anyTruncated || result.truncated
         } else {
-            body = (try? await FileContentExtractor.extract(from: url))
-                ?? "[Could not read: \(url.lastPathComponent)]"
+            body = "[Could not read: \(url.lastPathComponent)]"
         }
         sections.append("=== \(url.lastPathComponent) ===\n\(body)")
     }
-    return (sections.joined(separator: "\n\n"), nil)
+    return (sections.joined(separator: "\n\n"), nil, anyTruncated)
 }
 
 // MARK: - Second-file drag overlay
@@ -1425,9 +1713,9 @@ private struct SecondFileDragOverlay: View {
                 Image(systemName: isHovering ? "arrow.down.circle.fill" : "arrow.down.circle")
                     .font(.system(size: 28 * scale, weight: .semibold))
                     .foregroundColor(.white.opacity(isHovering ? 1.0 : 0.85))
-                    .scaleEffect(isHovering ? 1.12 : 1.0)
+                    .scaleEffect(isHovering ? 1.05 : 1.0)
                     .contentTransition(.symbolEffect(.replace))
-                    .animation(.spring(response: 0.28, dampingFraction: 0.62), value: isHovering)
+                    .animation(.spring(response: 0.28, dampingFraction: 0.82), value: isHovering)
 
                 Text(isHovering ? "Release to add or replace" : "Drop here to add another file\nor start a new session")
                     .font(.system(size: 13 * scale, weight: .semibold))
@@ -1553,5 +1841,41 @@ private struct SecondFilePromptBanner: View {
             vm.pendingSecondFileURL = nil
             vm.setChips(url: url)   // setChips() clears additionalFileURLs
         }
+    }
+}
+
+// MARK: - Cold-start prewarm
+//
+// The chips subtree (file pill, action chips, prompt field, glass material,
+// Markdown renderer) is only laid out the first time a file is dropped. That
+// first layout pays SwiftUI's one-time costs — generic specialisation, Core Text
+// glyph caches, the LiquidGlass blur/Metal pipeline, and NSWorkspace's icon
+// service — which is the visible hitch between the drop and the card appearing,
+// most noticeable right after launch.
+//
+// AppDelegate.prewarmSwiftUI() hosts this view in an offscreen, zero-alpha window
+// at launch so those costs are paid up front. It uses a throwaway URL, never
+// touches OverlayViewModel.shared's `stage`, and is released after a couple
+// seconds. It MUST stay composed of the SAME leaf views the real chips card uses
+// (FilePillsRow / ActionChip / PromptField / MarkdownText + .liquidGlass) — that
+// is what makes warming them effective.
+struct OverlayPrewarmView: View {
+    // Nonexistent path on purpose: FilePillsRow's icon lookup returns the generic
+    // document icon (warming NSWorkspace) without reading any real file.
+    private let dummyURL = URL(fileURLWithPath: "/private/tmp/aidrop.prewarm.txt")
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            FilePillsRow(primaryURL: dummyURL)
+            ForEach(["Summarise", "Key points", "Explain"], id: \.self) { title in
+                ActionChip(title: title, isLoading: false, action: {})
+            }
+            PromptField(text: .constant(""), onSubmit: {})
+            MarkdownText(source: "**Warming up** the renderer…")
+        }
+        .padding(12)
+        .frame(width: 280, height: 320)
+        .liquidGlass(cornerRadius: 22, tintOpacity: 0.7)
+        .environment(\.uiScale, UIScale.current.multiplier)
     }
 }

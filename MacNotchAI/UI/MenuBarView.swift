@@ -4,9 +4,20 @@ struct MenuBarView: View {
 
     @AppStorage("disabledUntil") private var disabledUntil: Double = 0
     @Environment(\.openSettings) private var openSettings
+    @ObservedObject private var usage = UsageStore.shared
 
     private var isDisabled: Bool {
         disabledUntil > Date().timeIntervalSince1970
+    }
+
+    /// Which "version" the user is on, shown under the title. Reflects the
+    /// persisted tier; today this is "Your own key" unless the backend is live.
+    private var versionLabel: String {
+        switch EntitlementStore.shared.tier {
+        case .byok:       return "Your own key"
+        case .freeHosted: return "AI Drop Free"
+        case .pro:        return "AI Drop Pro"
+        }
     }
 
     /// Smart remaining-time label handles minutes, hours, and "until re-enabled".
@@ -30,9 +41,31 @@ struct MenuBarView: View {
                     Text(pausedLabel)
                         .font(.caption)
                         .foregroundColor(.secondary)
+                } else {
+                    Text(versionLabel)
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                    if EntitlementStore.shared.tier == .freeHosted,
+                       let usageLabel = usage.menuLabel {
+                        Text(usageLabel)
+                            .font(.caption2)
+                            .foregroundColor(.secondary)
+                    }
                 }
             }
             .padding(.bottom, 4)
+
+            Divider()
+
+            // ── Upgrade (locked until the hosted backend is live) ───────────────
+            if BackendConfig.isBackendLive {
+                Button("Upgrade to Pro") {
+                    EntitlementStore.shared.startUpgrade()
+                }
+            } else {
+                Button("Upgrade to Pro — coming soon") { }
+                    .disabled(true)
+            }
 
             Divider()
 

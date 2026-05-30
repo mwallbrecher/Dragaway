@@ -10,6 +10,18 @@ AI Drop is a native macOS menu-bar app that turns your physical notch into an AI
 
 ---
 
+## What's New in v9.5
+
+- **Prompt tabs** — the action card now has three tabs: **Suggested** (smart actions for the file), **History** (your recently typed prompts), and **Custom** (your own saved prompts). History and custom prompts are saved locally on your Mac.
+- **Custom Prompts in Settings** — add, edit, and remove reusable prompts from the Settings window; they show up instantly in the Custom tab.
+- **Hosted free tier** — start using AI Drop with **no API key**. A built-in Gemini-powered free tier (metered per device) lets you try every action before bringing your own key.
+- **Google Gemini provider** — bring your own **Gemini 2.5 Flash** key alongside Groq, Claude, ChatGPT, and Ollama.
+- **Multi-file sessions** — drop a second file onto an open card to analyse several files together, with a file gallery, per-file remove, and multi-file share.
+- **Movable overlay** — drag the panel to reposition it anywhere on screen.
+- **Snappier animations** — faster, tighter state transitions with reduced overbounce across the whole flow.
+
+---
+
 ## How to Install
 
 1. Download **AIDrop.dmg** from the [latest release](https://github.com/mwallbrecher/MacNotchAI/releases/latest)
@@ -88,12 +100,14 @@ The entire flow happens in a floating black panel — no app switching, no typin
 ### AI Providers
 | Provider | Model | Cost | Notes |
 |---|---|---|---|
-| **Groq** | Llama 3.1 8B | ~10,000 interactions / $5 | Free tier included; fastest |
+| **Free tier** | Gemini 2.5 Flash (hosted) | Free, metered | No API key needed; try every action right away |
+| **Groq** | Llama 3.1 8B | ~10,000 interactions / $5 | Cheapest; fastest |
+| **Gemini** | Gemini 2.5 Flash | BYOK | Fast with strong reasoning; image support |
 | **Claude** | Haiku 4.5 | ~385 interactions / $5 | Best quality, coding, long context |
 | **ChatGPT** | GPT-4o mini | ~2,800 interactions / $5 | Best balance; image support |
 | **Ollama** | Any local model | Unlimited, free | Runs 100% on your Mac; no API bill |
 
-All API keys are stored in **macOS Keychain** — never in files, never in the app bundle.
+The built-in **free tier** runs through a hosted metering proxy — the host key never ships in the app. Your own API keys are stored in **macOS Keychain** — never in files, never in the app bundle.
 
 ---
 
@@ -167,10 +181,11 @@ We monitor `NSPasteboard(name: .drag)` via `NSEvent.addGlobalMonitorForEvents(.l
 During the 0.14 s dismiss fade, both the old and new `WaitingPillView` are live simultaneously. If both own a `Task` for the jelly animation, two concurrent `withAnimation{}` blocks targeting the same `@Published` properties cause a SwiftUI invariant violation (`_crashOnException`). Solution: the jelly `Task` is stored on `OverlayViewModel` (singleton); `startJellyHover()` always cancels the previous task before creating a new one.
 
 **File content extraction**
-- PDF → `PDFKit.PDFDocument`
-- DOCX → `ZipArchive` + XML parsing of `word/document.xml`
-- Plain text → direct `String(contentsOf:)`
+- PDF → `PDFKit.PDFDocument` (first 20 pages / 12k chars)
+- DOCX / DOC / RTF → `NSAttributedString` via the Cocoa text system (plain-text string)
+- Plain text / code → `String(contentsOf:)` with encoding auto-detection + lossy fallback
 - Images → passed as `URL` directly to vision-capable models
+- Oversized sources are truncated to ~12k chars and flagged in the result UI
 
 **Privacy model**
 Files are read only when the user explicitly taps an action chip. Nothing is uploaded speculatively. The only network calls are the AI API completions. API keys never leave the device except in those API calls.

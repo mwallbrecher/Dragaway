@@ -1,0 +1,31 @@
+# Cloudflare Worker — AI Drop hosted free tier (metering proxy).
+#
+# This Worker holds the host Gemini key as a SECRET (never in the app) and meters
+# usage per device: a one-time 30-call trial, then 10 calls/day. A global daily
+# circuit-breaker caps total spend so abuse can't drain the budget.
+#
+# First-time setup (run these in the `worker/` folder — see README.md):
+#   npm i -g wrangler          # or: brew install cloudflare-wrangler
+#   wrangler login
+#   wrangler d1 create aidrop   # then paste the printed database_id below
+#   wrangler d1 execute aidrop --remote --file=./schema.sql
+#   wrangler secret put GEMINI_API_KEY    # paste your Google AI Studio key
+#   wrangler deploy
+# Then copy the deployed https://… URL into the app's BackendConfig.proxyBaseURL.
+
+name = "aidrop"
+main = "src/index.js"
+compatibility_date = "2025-01-01"
+
+# Tunable limits (no code change / no app release needed to adjust).
+[vars]
+TRIAL_TOTAL = "30"        # one-time free interactions per device
+FREE_DAILY_CAP = "10"     # interactions/day after the trial is used up
+GLOBAL_DAILY_CAP = "2000" # hard ceiling on TOTAL interactions/day (budget guard)
+GEMINI_MODEL = "gemini-2.5-flash"
+
+# D1 database binding. Paste the database_id printed by `wrangler d1 create aidrop`.
+[[d1_databases]]
+binding = "DB"
+database_name = "aidrop"
+database_id = "1a913dbf-6ddb-432b-9782-cafe3120158c"

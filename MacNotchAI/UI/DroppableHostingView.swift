@@ -89,7 +89,7 @@ final class DroppableHostingView<Content: View>: NSHostingView<Content> {
         guard case .waitingForDrop = vm.stage else {
             // Unsupported types can't be added to a session either
             guard !FileInspector.isUnsupportedFileType(url) else { return false }
-            withAnimation(.spring(response: 0.35, dampingFraction: 0.68)) {
+            withAnimation(.spring(response: 0.36, dampingFraction: 1.0)) {
                 vm.pendingSecondFileURL = url
             }
             return true
@@ -103,7 +103,7 @@ final class DroppableHostingView<Content: View>: NSHostingView<Content> {
             )
             return true
         }
-        withAnimation(.spring(response: 0.42, dampingFraction: 0.58)) {
+        withAnimation(.spring(response: 0.34, dampingFraction: 1.0)) {
             vm.setChips(url: url)
         }
         return true

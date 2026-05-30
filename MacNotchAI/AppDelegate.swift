@@ -39,6 +39,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         observeDragOutState()
         observeStageChanges()
         observeChipsExpanded()
+        observeChipsTab()
+        observeUserDragOffset()
         prewarmSwiftUI()
 
         NotificationCenter.default.addObserver(
@@ -263,6 +265,24 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             .store(in: &cancellables)
     }
 
+    /// Reposition (not resize) the window as the user drags the grabber handle.
+    /// The grabber's DragGesture writes userDragOffset; we apply it to the window
+    /// origin here. No deferral needed — setFrameOrigin doesn't run a layout pass.
+    private func observeUserDragOffset() {
+        // NO .receive(on:) — that schedules an async runloop hop even on the main
+        // thread, so the window trailed the cursor by a frame (visible lag). The
+        // gesture writes the offset on the main thread, so deliver synchronously and
+        // move the window in the same tick. setFrameOrigin runs no layout pass, so
+        // this is safe inside the @Published willSet. We use the value the publisher
+        // hands us (the property isn't committed yet during willSet).
+        OverlayViewModel.shared.$userDragOffset
+            .sink { [weak self] offset in
+                guard let window = self?.overlayWindow, window.isVisible else { return }
+                window.reapplyUserOffset(offset)
+            }
+            .store(in: &cancellables)
+    }
+
     private func observeChipsExpanded() {
         OverlayViewModel.shared.$isChipsExpanded
             .receive(on: DispatchQueue.main)
@@ -271,6 +291,26 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                     self?.resizeOverlay(for: OverlayViewModel.shared.stage)
                 }
             }
+            .store(in: &cancellables)
+    }
+
+    /// Stage-2 chips window must follow the active prompt tab AND the row count of
+    /// the History / Custom lists (both can change while the chips card is up, e.g.
+    /// adding a custom prompt via the "+" row). All three feed the same resize.
+    private func observeChipsTab() {
+        let resize: (Any) -> Void = { [weak self] _ in
+            DispatchQueue.main.async {
+                self?.resizeOverlay(for: OverlayViewModel.shared.stage)
+            }
+        }
+        OverlayViewModel.shared.$chipsTab
+            .receive(on: DispatchQueue.main).sink(receiveValue: resize)
+            .store(in: &cancellables)
+        PromptStore.shared.$customPrompts
+            .receive(on: DispatchQueue.main).sink(receiveValue: resize)
+            .store(in: &cancellables)
+        PromptStore.shared.$history
+            .receive(on: DispatchQueue.main).sink(receiveValue: resize)
             .store(in: &cancellables)
     }
 
@@ -295,13 +335,27 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     /// delay or, in rare cases, a crash when a layout pass races the first stage
     /// transition. A minimal hidden view created eagerly at launch eliminates both.
     private func prewarmSwiftUI() {
-        let hosting = NSHostingView(rootView: Color.clear.frame(width: 1, height: 1))
-        let win = NSWindow(contentRect: .zero, styleMask: .borderless,
+        // Host the ACTUAL chips leaf views (OverlayPrewarmView), not a 1×1 Color.
+        // The first real chips render otherwise pays SwiftUI's one-time costs —
+        // generic specialisation, Core Text glyph caches, the LiquidGlass/Metal
+        // pipeline, NSWorkspace icon service — on the drop hot path, which reads as
+        // a hitch between drop and the card appearing (worst right after launch).
+        // Rendering it here off-screen pays those costs up front. Sized to the real
+        // chips frame so layout warms at the right dimensions; positioned far
+        // off-screen with zero alpha so it never paints anything the user can see.
+        let hosting = NSHostingView(rootView: OverlayPrewarmView())
+        let win = NSWindow(contentRect: NSRect(x: -10_000, y: -10_000, width: 280, height: 320),
+                           styleMask: .borderless,
                            backing: .buffered, defer: false)
-        win.contentView = hosting
+        win.alphaValue   = 0
+        win.contentView  = hosting
+        win.orderBack(nil)               // force a real layout/display pass while hidden
         // Retain for 2 s then release — SwiftUI/Metal are warmed up by then.
         var retained: NSWindow? = win
-        DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) { retained = nil }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
+            retained?.orderOut(nil)
+            retained = nil
+        }
     }
 
     // MARK: - Startup toast
@@ -424,23 +478,25 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         // (underdamped → bouncy pop-in). Collapse uses dampingFraction 1.0
         // (critically damped → Y goes monotonically 1.0 → 0.02, never overshoots
         // into negative values, never "pops" back into view).
-        // anchor: .top = the overlay squishes upward into the notch.
-        // response: 0.18 → fast snap into the notch (~0.18 s to reach target).
-        // dampingFraction: 1.0 → critically damped, Y travels straight to 0,
+        // anchor: .top = the overlay squishes straight up into the notch.
+        // Only Y collapses now (X holds at 1.0 in OverlayView), so this is a clean
+        // vertical shrink — no diagonal corner-pull that read as overshoot before.
+        // response: 0.24 → calm, unhurried settle into the notch.
+        // dampingFraction: 1.0 → critically damped, Y travels straight to its target,
         // no overshoot, no bounce back into view.
-        withAnimation(.spring(response: 0.18, dampingFraction: 1.0)) {
+        withAnimation(.spring(response: 0.24, dampingFraction: 1.0)) {
             OverlayViewModel.shared.isCollapsing = true
         }
 
         // ── Token-guarded deferred teardown ──────────────────────────────────
-        // 0.28 s gives the spring comfortable room to reach Y=0.02 and settle.
-        // If ensureOverlayVisible() fires first it writes a new token → this
-        // closure becomes a no-op and the window is reused instead.
+        // 0.34 s gives the calmer collapse spring room to reach Y≈0.02 and settle
+        // before the window is ordered out. If ensureOverlayVisible() fires first it
+        // writes a new token → this closure becomes a no-op and the window is reused.
         let token = UUID()
         dismissToken       = token
         isWindowDismissing = true
 
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.28) { [weak self] in
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.34) { [weak self] in
             guard let self, self.dismissToken == token else { return }
             self.isWindowDismissing = false
             self.overlayWindow?.orderOut(nil)
@@ -471,11 +527,18 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
         case .chips(_, let actions):
             if OverlayViewModel.shared.isChipsExpanded {
-                let n = min(actions.count, 6)
-                // header(50) + spacing(10) + "Suggested"(14) + spacing(10)
-                // + chips(n×36 + (n-1)×6) + spacing(10) + prompt(42) + padding(36)
-                let chipsH = CGFloat(n) * 36 + CGFloat(max(n - 1, 0)) * 6
-                let h = (50 + 10 + 14 + 10 + chipsH + 10 + 42 + 36) * s
+                // Height follows the ACTIVE prompt tab's row count (capped), using
+                // the same ChipsLayout numbers the SwiftUI content region uses so
+                // the window always fits exactly. See ChipsLayout.
+                let store = PromptStore.shared
+                let rows = ChipsLayout.rows(for: OverlayViewModel.shared.chipsTab,
+                                            suggested: actions.count,
+                                            history: store.history.count,
+                                            custom: store.customPrompts.count)
+                let contentH = ChipsLayout.contentHeight(rows: rows)
+                // header(50) + spacing(10) + tabBar + spacing(10)
+                // + content + spacing(10) + prompt(42) + padding(36)
+                let h = (50 + 10 + ChipsLayout.tabBarHeight + 10 + contentH + 10 + 42 + 36) * s
                 size = CGSize(width: 280 * s, height: max(h, 220 * s))
             } else {
                 // Collapsed: header + spacing + prompt field + padding only
@@ -641,12 +704,20 @@ extension Notification.Name {
 // MARK: - Provider resolution
 
 func resolveProvider() -> any AIProvider {
+    // Free / Pro tiers route through the hosted Worker (host key lives server-side).
+    // Falls back to BYOK until the Worker URL is pasted into BackendConfig.
+    if EntitlementStore.shared.tier != .byok, BackendConfig.proxyBaseURL != nil {
+        return HostedProvider()
+    }
+
     let raw  = UserDefaults.standard.string(forKey: "selectedProvider") ?? ""
     let type = AIProviderType(rawValue: raw) ?? .groq
 
     switch type {
     case .groq:
         return GroqProvider(apiKey: KeychainManager.shared.load(service: "com.aidrop.groq") ?? "")
+    case .gemini:
+        return GeminiProvider(apiKey: KeychainManager.shared.load(service: "com.aidrop.gemini") ?? "")
     case .anthropic:
         return AnthropicProvider(apiKey: KeychainManager.shared.load(service: "com.aidrop.anthropic") ?? "")
     case .openai:

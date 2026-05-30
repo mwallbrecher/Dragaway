@@ -1,5 +1,6 @@
 import SwiftUI
 import Combine
+import AppKit
 
 /// Shared state that drives which stage the overlay is in.
 /// AppDelegate writes to it; OverlayView reads from it.
@@ -37,6 +38,14 @@ class OverlayViewModel: ObservableObject {
             .store(in: &cancellables)
     }
 
+    /// Active tab in the stage-2 prompt section (the dropped-file chips card).
+    /// Suggested = file-type action chips; History = re-runnable typed prompts;
+    /// Custom = user-curated prompts. Observed by AppDelegate so the chips window
+    /// resizes to the active tab's row count.
+    enum ChipsTab: Int, CaseIterable {
+        case suggested, history, custom
+    }
+
     enum Stage {
         case waitingForDrop
         case chips(url: URL, actions: [AIAction])
@@ -72,7 +81,13 @@ class OverlayViewModel: ObservableObject {
     }
 
     @Published var stage: Stage = .waitingForDrop
+    // Active tab in the stage-2 prompt section. Reset to .suggested on each fresh
+    // drop so a new file always opens on its suggested actions.
+    @Published var chipsTab: ChipsTab = .suggested
     @Published var isDragHovering = false
+    // True when the current result was produced from content cut to fit the
+    // extractor's char/page cap. Drives the "analysed the first part" hint.
+    @Published var contentTruncated = false
     @Published var isDraggingOut  = false
     @Published var customPrompt: String = ""
 
@@ -83,6 +98,19 @@ class OverlayViewModel: ObservableObject {
     // Drives the "Session opened in …" confirmation pill in stage 2.
     // Set after handoff navigation, auto-cleared after 6 s.
     @Published var handoffProviderName: String? = nil
+
+    /// User-applied drag offset (screen coordinates: +x right, +y up) for the
+    /// movable window. Applied on top of the notch-anchored origin in
+    /// OverlayWindow.notchFrame, so it survives every stage resize. Reset to .zero
+    /// on each fresh drop (setChips) and full reset() so the default origin stays
+    /// pinned to the notch — only the current session can be nudged.
+    @Published var userDragOffset: CGSize = .zero
+
+    /// True when the system "Reduce Motion" accessibility setting is on.
+    /// Used to drop the jelly scale entirely so the pill just settles in place.
+    var reduceMotion: Bool {
+        NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+    }
 
     /// URL of a second file dropped while an active session is running.
     /// Shown as a banner prompt: "Add to session" or "New session".
@@ -121,16 +149,19 @@ class OverlayViewModel: ObservableObject {
     // binding" crashes that multi-Task approaches produce.
 
     func startJellyHover() {
-        // Overdamped enough to reach 1.12 cleanly without oscillating past it.
-        withAnimation(.spring(response: 0.22, dampingFraction: 0.72)) {
-            jellyX = 1.12; jellyY = 1.12
+        // Reduce Motion: no scale at all — the pill stays put.
+        guard !reduceMotion else { return }
+        // Subtle 1.05 lift, well-damped so it reaches the target cleanly with no
+        // oscillation. A calm "alive" cue rather than an expressive bounce.
+        withAnimation(.spring(response: 0.24, dampingFraction: 0.82)) {
+            jellyX = 1.05; jellyY = 1.05
         }
     }
 
     func stopJellyHover() {
-        // Low damping fraction → spring overshoots 1.0 and oscillates briefly.
-        // That oscillation is the wobble. No manual phase timing needed.
-        withAnimation(.spring(response: 0.30, dampingFraction: 0.44)) {
+        // High damping fraction → spring settles back to 1.0 without overshoot.
+        // Previously 0.44 (visible wobble); now a gentle return, no oscillation.
+        withAnimation(.spring(response: 0.28, dampingFraction: 0.82)) {
             jellyX = 1.0; jellyY = 1.0
         }
     }
@@ -139,8 +170,12 @@ class OverlayViewModel: ObservableObject {
 
     func setChips(url: URL) {
         additionalFileURLs = []   // fresh drop clears any previously added files
+        chipsTab = .suggested     // always open a new file on its suggested actions
         // Fresh drop — previous session's cached result no longer relevant.
         cachedResult = nil
+        // Fresh drop re-anchors the window at the notch; discard any manual nudge.
+        userDragOffset = .zero
+        contentTruncated = false
         stage = .chips(url: url, actions: FileInspector.suggestedActions(for: url))
         customPrompt = ""
     }
@@ -171,6 +206,7 @@ class OverlayViewModel: ObservableObject {
     /// so the next session starts in the state the user left it.
     func reset() {
         stage         = .waitingForDrop
+        chipsTab       = .suggested
         isDragHovering = false
         isDraggingOut  = false
         customPrompt   = ""
@@ -178,11 +214,42 @@ class OverlayViewModel: ObservableObject {
         handoffProviderName = nil
         pendingSecondFileURL  = nil
         additionalFileURLs    = []
+        userDragOffset        = .zero
+        contentTruncated      = false
         jellyX              = 1.0
         jellyY         = 1.0
         isCollapsing   = false
         // Restore saved preferences so each new session matches the last one.
         isChipsExpanded     = UserDefaults.standard.object(forKey: Self.keyChipsExpanded)     as? Bool ?? true
         isFollowupsExpanded = UserDefaults.standard.object(forKey: Self.keyFollowupsExpanded) as? Bool ?? false
+    }
+}
+
+/// Shared geometry for the stage-2 prompt-tab content. The chips window is sized in
+/// AppDelegate independently of SwiftUI layout, so BOTH the SwiftUI content region
+/// (OverlayView) and the window-height calc (AppDelegate) must derive their height
+/// from the same numbers — any drift would clip content or leave a gap. All values
+/// are UNSCALED; multiply by the UI scale at the call site.
+enum ChipsLayout {
+    static let rowStride:    CGFloat = 36   // per-row height budget (chip + slack)
+    static let rowSpacing:   CGFloat = 6
+    static let tabBarHeight: CGFloat = 28
+    static let maxVisibleRows = 5           // beyond this the content region scrolls
+
+    /// Height of the (scrollable) tab content region for `rows` rows.
+    static func contentHeight(rows: Int) -> CGFloat {
+        let n = max(1, min(rows, maxVisibleRows))
+        return CGFloat(n) * rowStride + CGFloat(n - 1) * rowSpacing
+    }
+
+    /// Logical row count for a tab BEFORE clamping. History shows a 1-row empty
+    /// placeholder; Custom always includes the trailing "+ add" row.
+    static func rows(for tab: OverlayViewModel.ChipsTab,
+                     suggested: Int, history: Int, custom: Int) -> Int {
+        switch tab {
+        case .suggested: return max(suggested, 1)
+        case .history:   return history == 0 ? 1 : history
+        case .custom:    return custom + 1
+        }
     }
 }

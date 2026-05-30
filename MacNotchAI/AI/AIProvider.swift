@@ -9,6 +9,7 @@ protocol AIProvider {
 
 enum AIProviderType: String, CaseIterable {
     case groq       = "Groq (Free)"
+    case gemini     = "Gemini (Google)"
     case openai     = "OpenAI (GPT-4o)"
     case anthropic  = "Anthropic (Claude)"
     case ollama     = "Ollama (Local, Free)"
@@ -22,6 +23,7 @@ extension AIProviderType {
     var displayName: String {
         switch self {
         case .groq:      return "Groq"
+        case .gemini:    return "Gemini"
         case .anthropic: return "Claude"
         case .openai:    return "ChatGPT"
         case .ollama:    return "Ollama"
@@ -32,6 +34,7 @@ extension AIProviderType {
     var modelLabel: String {
         switch self {
         case .groq:      return "Llama 3.1 8B"
+        case .gemini:    return "Gemini 2.5 Flash"
         case .anthropic: return "Haiku 4.5"
         case .openai:    return "GPT-4o mini"
         case .ollama:    return "local model"
@@ -42,6 +45,7 @@ extension AIProviderType {
     var badgeLabel: String {
         switch self {
         case .groq:      return "Free"
+        case .gemini:    return "Cheapest"
         case .openai:    return "Balance"
         case .anthropic: return "Highest Quality"
         case .ollama:    return "Local"
@@ -52,6 +56,7 @@ extension AIProviderType {
     var badgeColor: Color {
         switch self {
         case .groq:      return .green
+        case .gemini:    return .green
         case .openai:    return .blue
         case .anthropic: return .purple
         case .ollama:    return .secondary
@@ -62,6 +67,7 @@ extension AIProviderType {
     var tagline: String {
         switch self {
         case .groq:      return "Fast · Good for simple document analyses"
+        case .gemini:    return "Fastest with fairly good reasoning"
         case .anthropic: return "Deepest reasoning · Best for power users"
         case .openai:    return "Better reasoning · Balance between quality, speed & price"
         case .ollama:    return "Runs on your Mac · Limited to your hardware"
@@ -79,6 +85,8 @@ extension AIProviderType {
         switch self {
         case .groq:
             return "Llama 3.1 8B · Free tier available · ~10,000 interactions* per $5"
+        case .gemini:
+            return "Gemini 2.5 Flash · Cheapest · Fastest with fairly good reasoning"
         case .anthropic:
             return "Claude Haiku 4.5 · ~400 interactions* per $5"
         case .openai:
