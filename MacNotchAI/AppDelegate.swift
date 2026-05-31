@@ -2,11 +2,12 @@ import AppKit
 import Combine
 import SwiftUI
 
-class AppDelegate: NSObject, NSApplicationDelegate {
+class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var overlayWindow: OverlayWindow?
     private var onboardingWindow: NSWindow?
     private var hotkeyPickerWindow: NSWindow?
     private var startupToastWindow: NSPanel?
+    private var statusItem: NSStatusItem?         // menu-bar icon (replaces MenuBarExtra)
     private var cancellables = Set<AnyCancellable>()
     private var escapeMonitor: Any?
     private var outsideClickMonitor: Any?
@@ -42,6 +43,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         observeChipsTab()
         observeUserDragOffset()
         prewarmSwiftUI()
+        setupStatusItem()
 
         NotificationCenter.default.addObserver(
             self, selector: #selector(handleShowOnboarding),
@@ -50,6 +52,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         NotificationCenter.default.addObserver(
             self, selector: #selector(handleHideOverlay),
             name: .hideOverlay, object: nil
+        )
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(handleMinimizeOverlay),
+            name: .minimizeOverlay, object: nil
         )
         NotificationCenter.default.addObserver(
             self, selector: #selector(handleShowHotkeyPicker),
@@ -94,6 +100,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func handleShowOnboarding()    { showOnboarding()    }
     @objc private func handleHideOverlay()       { hideOverlay()       }
+    @objc private func handleMinimizeOverlay()   { minimizeOverlay()   }
     @objc private func handleShowHotkeyPicker()  { showHotkeyPicker()  }
     @objc private func handleShowCustomDisable() { showCustomDisable() }
 
@@ -130,6 +137,343 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 anchorAtNotchCenter: anchorLeft
             )
         }
+    }
+
+    // MARK: - Menu-bar status item
+    //
+    // Replaces SwiftUI's MenuBarExtra so the icon click can be intercepted: a
+    // LEFT-click restores a parked (minimized) session when one exists; otherwise it
+    // opens the menu. A RIGHT-click (or control-click) always opens the menu, so
+    // Settings / Quit stay reachable even while a session is minimized.
+
+    private func setupStatusItem() {
+        let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
+        if let button = item.button {
+            button.image = NSImage(systemSymbolName: "sparkles", accessibilityDescription: "AI Drop")
+            button.image?.isTemplate = true     // adapts to light/dark menu bar
+            button.target = self
+            button.action = #selector(statusItemClicked(_:))
+            button.sendAction(on: [.leftMouseUp, .rightMouseUp])
+        }
+        statusItem = item
+    }
+
+    @objc private func statusItemClicked(_ sender: Any?) {
+        let event = NSApp.currentEvent
+        let isMenuClick = event?.type == .rightMouseUp
+                       || event?.modifierFlags.contains(.control) == true
+        if !isMenuClick, OverlayViewModel.shared.hasMinimizedSession {
+            restoreMinimizedSession()
+        } else {
+            showStatusMenu()
+        }
+    }
+
+    /// Pop the native AppKit menu under the status item. We attach the menu only for
+    /// this one click (then detach in `menuDidClose`) so a plain left-click can still
+    /// reach `statusItemClicked` to RESTORE a minimized session.
+    private func showStatusMenu() {
+        guard let item = statusItem, let button = item.button else { return }
+        item.menu = buildStatusMenu()    // rebuilt per open → fresh dynamic labels
+        button.performClick(nil)
+    }
+
+    /// Build the menu fresh each open so dynamic labels (tier, usage, paused state,
+    /// hotkey) are current — mirrors MenuBarExtra's per-open render. Authored as a
+    /// real NSMenu so it has native macOS styling (the previous NSPopover rendered
+    /// SwiftUI buttons as a card, which looked wrong).
+    private func buildStatusMenu() -> NSMenu {
+        let menu = NSMenu()
+        menu.delegate = self
+
+        let now           = Date().timeIntervalSince1970
+        let disabledUntil = UserDefaults.standard.double(forKey: "disabledUntil")
+        let isDisabled    = disabledUntil > now
+
+        // ── Title + subtitle (disabled, informational) ──────────────────────────
+        addInfoItem(to: menu, title: "AI Drop")
+        addInfoItem(to: menu, title: isDisabled ? pausedLabel(secs: disabledUntil - now)
+                                                 : tierLabel())
+        if !isDisabled, EntitlementStore.shared.tier == .freeHosted,
+           let usageLabel = UsageStore.shared.menuLabel {
+            addInfoItem(to: menu, title: usageLabel)
+        }
+
+        menu.addItem(.separator())
+
+        // ── Upgrade (locked until the hosted backend is live) ───────────────────
+        if BackendConfig.isBackendLive {
+            addItem(to: menu, title: "Upgrade to Pro", action: #selector(menuUpgrade))
+        } else {
+            addInfoItem(to: menu, title: "Upgrade to Pro — coming soon")
+        }
+
+        menu.addItem(.separator())
+
+        // ── Provider / settings ─────────────────────────────────────────────────
+        addItem(to: menu, title: "Change Language Model", action: #selector(menuChangeModel))
+        addItem(to: menu, title: "Settings…", action: #selector(menuOpenSettings), key: ",")
+
+        // ── Recent sessions (file + AI conversation, last 10) ───────────────────
+        let historyItem = NSMenuItem(title: "Recent Sessions", action: nil, keyEquivalent: "")
+        historyItem.submenu = buildHistorySubmenu()
+        menu.addItem(historyItem)
+
+        menu.addItem(.separator())
+
+        // ── Disable / re-enable ──────────────────────────────────────────────────
+        if isDisabled {
+            addItem(to: menu, title: "Re-enable Now", action: #selector(menuReEnable))
+        } else {
+            let disableItem = NSMenuItem(title: "Disable for…", action: nil, keyEquivalent: "")
+            let sub = NSMenu()
+            addItem(to: sub, title: "5 minutes",  action: #selector(menuDisableUntil(_:)), represented: now + 5  * 60)
+            addItem(to: sub, title: "15 minutes", action: #selector(menuDisableUntil(_:)), represented: now + 15 * 60)
+            addItem(to: sub, title: "30 minutes", action: #selector(menuDisableUntil(_:)), represented: now + 30 * 60)
+            addItem(to: sub, title: "1 hour",     action: #selector(menuDisableUntil(_:)), represented: now + 60 * 60)
+            sub.addItem(.separator())
+            let midnight = (Calendar.current.date(byAdding: .day, value: 1,
+                              to: Calendar.current.startOfDay(for: Date()))
+                            ?? Date().addingTimeInterval(24 * 3600)).timeIntervalSince1970
+            addItem(to: sub, title: "For today",         action: #selector(menuDisableUntil(_:)), represented: midnight)
+            addItem(to: sub, title: "Until Re-Enabled",  action: #selector(menuDisableUntil(_:)),
+                    represented: Date().addingTimeInterval(10 * 365 * 24 * 3600).timeIntervalSince1970)
+            sub.addItem(.separator())
+            addItem(to: sub, title: "Custom…", action: #selector(menuDisableCustom))
+            disableItem.submenu = sub
+            menu.addItem(disableItem)
+        }
+
+        // Hotkey — morphs to show the active key when configured
+        let hotkeyTitle = HotkeyManager.shared.isEnabled
+            ? "Hotkey: \(HotkeyManager.shared.displayString)…"
+            : "Add Hotkey…"
+        addItem(to: menu, title: hotkeyTitle, action: #selector(menuHotkey))
+
+        menu.addItem(.separator())
+
+        addItem(to: menu, title: "Quit AI Drop", action: #selector(menuQuit), key: "q")
+        return menu
+    }
+
+    // MARK: Recent-sessions submenu
+
+    /// Last 10 sessions as file rows (icon + name + date), styled like a native
+    /// "recents" menu. Each row reopens the session; its ⌥-alternate removes it.
+    private func buildHistorySubmenu() -> NSMenu {
+        let menu = NSMenu()
+        let sessions = SessionHistoryStore.shared.sessions
+
+        guard !sessions.isEmpty else {
+            addInfoItem(to: menu, title: "No recent sessions")
+            return menu
+        }
+
+        let df = DateFormatter()
+        df.dateFormat = "dd.MM.yy, HH:mm"
+
+        for rec in sessions {
+            let dateStr = df.string(from: rec.updatedAt)
+            let icon = historyIcon(forPath: rec.primaryPath)
+
+            // Normal row — open the session.
+            let open = NSMenuItem(title: rec.fileName,
+                                  action: #selector(menuOpenHistorySession(_:)), keyEquivalent: "")
+            open.target = self
+            open.representedObject = rec.id.uuidString
+            open.keyEquivalentModifierMask = []
+            open.attributedTitle = historyTitle(name: rec.fileName, date: dateStr, destructive: false)
+            open.image = icon
+            menu.addItem(open)
+
+            // ⌥-alternate row — remove just this session.
+            let remove = NSMenuItem(title: rec.fileName,
+                                    action: #selector(menuRemoveHistorySession(_:)), keyEquivalent: "")
+            remove.target = self
+            remove.representedObject = rec.id.uuidString
+            remove.isAlternate = true
+            remove.keyEquivalentModifierMask = [.option]
+            remove.attributedTitle = historyTitle(name: "Remove “\(rec.fileName)”",
+                                                   date: dateStr, destructive: true)
+            remove.image = icon
+            menu.addItem(remove)
+        }
+
+        menu.addItem(.separator())
+        addItem(to: menu, title: "Clear History", action: #selector(menuClearHistory))
+        addInfoItem(to: menu, title: "Hold ⌥ to remove a single session")
+        return menu
+    }
+
+    /// 32-pt file-type icon for a menu row (generic if the file no longer exists).
+    private func historyIcon(forPath path: String) -> NSImage {
+        let icon = NSWorkspace.shared.icon(forFile: path)
+        icon.size = NSSize(width: 32, height: 32)
+        return icon
+    }
+
+    /// Two-line menu title: file name over a dimmer date. Colours use semantic
+    /// label colours so the rows read correctly in both light and dark menus.
+    private func historyTitle(name: String, date: String, destructive: Bool) -> NSAttributedString {
+        let para = NSMutableParagraphStyle()
+        para.lineSpacing = 1
+        let s = NSMutableAttributedString()
+        s.append(NSAttributedString(string: name, attributes: [
+            .font: NSFont.systemFont(ofSize: 13, weight: .regular),
+            .foregroundColor: destructive ? NSColor.systemRed : NSColor.labelColor,
+            .paragraphStyle: para,
+        ]))
+        s.append(NSAttributedString(string: "\n" + date, attributes: [
+            .font: NSFont.systemFont(ofSize: 11, weight: .regular),
+            .foregroundColor: NSColor.secondaryLabelColor,
+            .paragraphStyle: para,
+        ]))
+        return s
+    }
+
+    // MARK: Menu builders / labels
+
+    @discardableResult
+    private func addItem(to menu: NSMenu, title: String, action: Selector,
+                         key: String = "", represented: Any? = nil) -> NSMenuItem {
+        let item = NSMenuItem(title: title, action: action, keyEquivalent: key)
+        item.target = self
+        item.representedObject = represented
+        menu.addItem(item)
+        return item
+    }
+
+    private func addInfoItem(to menu: NSMenu, title: String) {
+        let item = NSMenuItem(title: title, action: nil, keyEquivalent: "")
+        item.isEnabled = false
+        menu.addItem(item)
+    }
+
+    private func tierLabel() -> String {
+        switch EntitlementStore.shared.tier {
+        case .byok:       return "Your own key"
+        case .freeHosted: return "AI Drop Free"
+        case .pro:        return "AI Drop Pro"
+        }
+    }
+
+    private func pausedLabel(secs: TimeInterval) -> String {
+        if secs > 365 * 24 * 3600 { return "Paused · until re-enabled" }
+        if secs > 3600            { return "Paused · \(Int(secs / 3600))h left" }
+        return "Paused · \(max(1, Int(ceil(secs / 60)))) min left"
+    }
+
+    // MARK: Menu actions
+
+    @objc private func menuUpgrade()     { EntitlementStore.shared.startUpgrade() }
+    @objc private func menuChangeModel()  { NotificationCenter.default.post(name: .showOnboarding, object: nil) }
+    @objc private func menuOpenSettings() {
+        NSApp.activate(ignoringOtherApps: true)
+        NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil)
+    }
+    @objc private func menuReEnable()     { UserDefaults.standard.set(0, forKey: "disabledUntil") }
+    @objc private func menuDisableUntil(_ sender: NSMenuItem) {
+        guard let ts = sender.representedObject as? TimeInterval else { return }
+        UserDefaults.standard.set(ts, forKey: "disabledUntil")
+    }
+    @objc private func menuDisableCustom() { NotificationCenter.default.post(name: .showCustomDisable, object: nil) }
+    @objc private func menuHotkey()        { NotificationCenter.default.post(name: .showHotkeyPicker, object: nil) }
+    @objc private func menuQuit()          { NSApp.terminate(nil) }
+
+    // MARK: Recent-sessions actions
+
+    /// Reopen a stored session: rebuild a MinimizedSnapshot showing the latest
+    /// result (prior turn cached for the back-arrow) and reuse the restore path.
+    @objc private func menuOpenHistorySession(_ sender: NSMenuItem) {
+        guard let idStr = sender.representedObject as? String,
+              let id = UUID(uuidString: idStr),
+              let rec = SessionHistoryStore.shared.record(for: id),
+              let last = rec.lastTurn else { return }
+
+        let primary = rec.fileURL
+        let lastAction = AIAction(rawValue: last.actionRaw) ?? .freeform
+        let stage: OverlayViewModel.Stage = .result(url: primary, action: lastAction, text: last.resultText)
+
+        var cached: OverlayViewModel.Stage? = nil
+        if let prev = rec.previousTurn {
+            let prevAction = AIAction(rawValue: prev.actionRaw) ?? .freeform
+            cached = .result(url: primary, action: prevAction, text: prev.resultText)
+        }
+
+        let additional = rec.additionalPaths
+            .map { URL(fileURLWithPath: $0) }
+            .filter { FileManager.default.fileExists(atPath: $0.path) }
+
+        let vm = OverlayViewModel.shared
+        let snap = OverlayViewModel.MinimizedSnapshot(
+            stage: stage,
+            chipsTab: .suggested,
+            isChipsExpanded: vm.isChipsExpanded,
+            isFollowupsExpanded: vm.isFollowupsExpanded,
+            userDragOffset: .zero,
+            cachedResult: cached,
+            additionalFileURLs: additional,
+            contentTruncated: false,
+            customPrompt: "")
+        vm.stageMinimized(snap)
+        restoreMinimizedSession()
+        // Continue this record so further actions append rather than duplicate.
+        SessionHistoryStore.shared.resumeSession(id: id)
+    }
+
+    @objc private func menuRemoveHistorySession(_ sender: NSMenuItem) {
+        guard let idStr = sender.representedObject as? String,
+              let id = UUID(uuidString: idStr) else { return }
+        SessionHistoryStore.shared.remove(id: id)
+    }
+
+    @objc private func menuClearHistory() { SessionHistoryStore.shared.clear() }
+
+    /// Detach the menu once it closes so the next plain left-click reaches
+    /// `statusItemClicked` (and can restore a minimized session). Deferred because
+    /// the menu is still tearing down when this fires.
+    func menuDidClose(_ menu: NSMenu) {
+        DispatchQueue.main.async { [weak self] in self?.statusItem?.menu = nil }
+    }
+
+    // MARK: - Minimize / restore
+
+    /// Park the live session and squish the overlay into the notch. Reuses
+    /// hideOverlay()'s collapse animation + teardown; reset() there does NOT clear
+    /// the snapshot, so the parked session survives for restore.
+    @MainActor
+    func minimizeOverlay() {
+        guard OverlayViewModel.shared.minimizeCurrentSession() else { return }
+        hideOverlay()
+    }
+
+    /// Bring a parked session back: rebuild/reuse the window, re-apply the snapshot,
+    /// and size/position to the restored stage.
+    @MainActor
+    func restoreMinimizedSession() {
+        let vm = OverlayViewModel.shared
+        guard let snap = vm.consumeMinimizedSnapshot() else { return }
+
+        // Cancel any pending dismiss so a fading window isn't torn down under us.
+        dismissToken       = UUID()
+        isWindowDismissing = false
+
+        // Reuse an existing window (e.g. a Stage-1 pill from a new drag) or build one.
+        if overlayWindow == nil {
+            let window = OverlayWindow()
+            window.contentView = DroppableHostingView(
+                rootView: OverlayView(provider: resolveProvider())
+            )
+            overlayWindow = window
+        }
+
+        // Apply parked state (sets `stage` last) then size/position to that stage.
+        vm.applySnapshot(snap)
+        let (size, anchorLeft) = sizeForStage(snap.stage)
+        overlayWindow?.alphaValue = 1
+        overlayWindow?.place(size: size, anchorAtNotchCenter: anchorLeft)
+        overlayWindow?.orderFront(nil)
+        startDismissMonitors()
     }
 
     // MARK: - Drag observation
@@ -515,15 +859,18 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         // .waitingForDrop stage change that would otherwise instantly shrink a
         // chips/result-sized window while it's fading out — visible and wrong.
         guard let window = overlayWindow, window.isVisible, !isWindowDismissing else { return }
+        let (size, anchorLeft) = sizeForStage(stage)
+        window.animateTo(size: size, anchorAtNotchCenter: anchorLeft)
+    }
 
+    /// Fixed window size + notch anchor for a stage. Single source of truth shared by
+    /// the live resize observer and the minimize→restore path.
+    /// `anchorLeft` = true pins the left column under the notch centre.
+    private func sizeForStage(_ stage: OverlayViewModel.Stage) -> (CGSize, Bool) {
         let s = UIScale.current.multiplier
-        let size: CGSize
-        let anchorLeft: Bool   // true = pin left column under notch centre
-
         switch stage {
         case .waitingForDrop:
-            size = CGSize(width: 288 * s, height: 96 * s)   // extra canvas for wobble overflow
-            anchorLeft = false
+            return (CGSize(width: 288 * s, height: 96 * s), false)   // canvas for wobble overflow
 
         case .chips(_, let actions):
             if OverlayViewModel.shared.isChipsExpanded {
@@ -539,17 +886,15 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 // header(50) + spacing(10) + tabBar + spacing(10)
                 // + content + spacing(10) + prompt(42) + padding(36)
                 let h = (50 + 10 + ChipsLayout.tabBarHeight + 10 + contentH + 10 + 42 + 36) * s
-                size = CGSize(width: 280 * s, height: max(h, 220 * s))
+                return (CGSize(width: 280 * s, height: max(h, 220 * s)), true)
             } else {
                 // Collapsed: header + spacing + prompt field + padding only
                 let h = (50 + 10 + 42 + 36) * s
-                size = CGSize(width: 280 * s, height: max(h, 148 * s))
+                return (CGSize(width: 280 * s, height: max(h, 148 * s)), true)
             }
-            anchorLeft = true
 
         case .loading:
-            size = CGSize(width: 500 * s, height: 280 * s)
-            anchorLeft = true
+            return (CGSize(width: 500 * s, height: 280 * s), true)
 
         case .result(_, _, let text):
             // Window is always sized to fit the full expanded layout (result card +
@@ -559,15 +904,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             let lines = max(text.components(separatedBy: "\n").count, text.count / 55)
             let resultH = min(CGFloat(lines) * 20, 200)
             let h = (18 + 44 + resultH + 44 + 20 + 3 * 40 + 44 + 18) * s
-            size = CGSize(width: 500 * s, height: min(max(h, 380 * s), 600 * s))
-            anchorLeft = true
+            return (CGSize(width: 500 * s, height: min(max(h, 380 * s), 600 * s)), true)
 
         case .error:
-            size = CGSize(width: 500 * s, height: 220 * s)
-            anchorLeft = true
+            return (CGSize(width: 500 * s, height: 220 * s), true)
         }
-
-        window.animateTo(size: size, anchorAtNotchCenter: anchorLeft)
     }
 
     // MARK: - Dismiss monitors
@@ -697,6 +1038,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 extension Notification.Name {
     static let showOnboarding   = Notification.Name("com.aidrop.showOnboarding")
     static let hideOverlay      = Notification.Name("com.aidrop.hideOverlay")
+    static let minimizeOverlay  = Notification.Name("com.aidrop.minimizeOverlay")
     static let showHotkeyPicker = Notification.Name("com.aidrop.showHotkeyPicker")
     static let showCustomDisable = Notification.Name("com.aidrop.showCustomDisable")
 }

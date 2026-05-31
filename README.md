@@ -10,7 +10,18 @@ AI Drop is a native macOS menu-bar app that turns your physical notch into an AI
 
 ---
 
-## What's New in v9.5
+## What's New in v0.9.8
+
+- **Session history** — AI Drop now remembers your last **10 sessions** (the file *and* the full AI conversation). Open the menu-bar icon → **Recent Sessions** to reopen any of them right where you left off. Hold **⌥** to remove a single session, or **Clear History** to wipe them all.
+- **File tools** — every file pill gets a **•••** menu: **Show in Finder**, **Rename**, **Move to…**, **PDF → text**, **Stitch PDFs**, and **Resize / Compress image** — all with pure Apple frameworks, no uploads.
+- **Native share sheet** — sharing a file now opens the standard macOS share sheet (AirDrop, Messages, Mail, Copy, and every share extension you have installed).
+- **Minimize & restore** — tuck an open session back into the notch with the **–** button and bring it back anytime from the menu bar.
+- **Native menu-bar menu** — the menu-bar dropdown is now a real macOS menu with proper styling.
+- **Polish** — the card now sits perfectly centred under the notch at every stage, the prompt-tab buttons have larger hit areas, and the action chips no longer clip on hover.
+
+---
+
+## What's New in v0.9.5
 
 - **Prompt tabs** — the action card now has three tabs: **Suggested** (smart actions for the file), **History** (your recently typed prompts), and **Custom** (your own saved prompts). History and custom prompts are saved locally on your Mac.
 - **Custom Prompts in Settings** — add, edit, and remove reusable prompts from the Settings window; they show up instantly in the Custom tab.

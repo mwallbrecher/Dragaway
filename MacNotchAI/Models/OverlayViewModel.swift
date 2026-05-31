@@ -106,6 +106,27 @@ class OverlayViewModel: ObservableObject {
     /// pinned to the notch — only the current session can be nudged.
     @Published var userDragOffset: CGSize = .zero
 
+    // ── Minimize / restore ─────────────────────────────────────────────────────
+    // A session parked by the − (minimize) button. Kept SEPARATE from `stage` so the
+    // overlay can fully tear down — freeing Stage-1 drag detection so new drags still
+    // pop the pill — while the parked session waits to be restored from the menu bar.
+    struct MinimizedSnapshot {
+        var stage: Stage
+        var chipsTab: ChipsTab
+        var isChipsExpanded: Bool
+        var isFollowupsExpanded: Bool
+        var userDragOffset: CGSize
+        var cachedResult: Stage?
+        var additionalFileURLs: [URL]
+        var contentTruncated: Bool
+        var customPrompt: String
+    }
+
+    /// True while a minimized session is waiting to be restored. Drives the menu-bar
+    /// icon's left-click (restore the session vs. open the menu).
+    @Published var hasMinimizedSession: Bool = false
+    private var minimizedSnapshot: MinimizedSnapshot?
+
     /// True when the system "Reduce Motion" accessibility setting is on.
     /// Used to drop the jelly scale entirely so the pill just settles in place.
     var reduceMotion: Bool {
@@ -169,6 +190,9 @@ class OverlayViewModel: ObservableObject {
     // MARK: - State
 
     func setChips(url: URL) {
+        // A genuine new drop supersedes any parked (minimized) session.
+        minimizedSnapshot = nil
+        hasMinimizedSession = false
         additionalFileURLs = []   // fresh drop clears any previously added files
         chipsTab = .suggested     // always open a new file on its suggested actions
         // Fresh drop — previous session's cached result no longer relevant.
@@ -176,6 +200,8 @@ class OverlayViewModel: ObservableObject {
         // Fresh drop re-anchors the window at the notch; discard any manual nudge.
         userDragOffset = .zero
         contentTruncated = false
+        // Fresh drop = a new history session (record persisted on the first turn).
+        SessionHistoryStore.shared.beginSession(primary: url)
         stage = .chips(url: url, actions: FileInspector.suggestedActions(for: url))
         customPrompt = ""
     }
@@ -186,6 +212,100 @@ class OverlayViewModel: ObservableObject {
         cachedResult = result
         stage = .chips(url: url, actions: FileInspector.suggestedActions(for: url))
         customPrompt = ""
+    }
+
+    // MARK: - Minimize / restore
+
+    /// Capture the current session so it can be restored later. Returns false (no-op)
+    /// at `waitingForDrop` — there is no session to minimize.
+    func minimizeCurrentSession() -> Bool {
+        guard stage.tag != 0 else { return false }
+        minimizedSnapshot = MinimizedSnapshot(
+            stage: stage, chipsTab: chipsTab,
+            isChipsExpanded: isChipsExpanded, isFollowupsExpanded: isFollowupsExpanded,
+            userDragOffset: userDragOffset, cachedResult: cachedResult,
+            additionalFileURLs: additionalFileURLs, contentTruncated: contentTruncated,
+            customPrompt: customPrompt)
+        hasMinimizedSession = true
+        return true
+    }
+
+    /// Park an externally-built snapshot (e.g. reopening a session from the history
+    /// menu) so the standard restoreMinimizedSession() path can bring it on screen.
+    func stageMinimized(_ snapshot: MinimizedSnapshot) {
+        minimizedSnapshot = snapshot
+        hasMinimizedSession = true
+    }
+
+    /// Hand back (and clear) the parked snapshot. Returns nil if nothing is parked.
+    func consumeMinimizedSnapshot() -> MinimizedSnapshot? {
+        defer { minimizedSnapshot = nil; hasMinimizedSession = false }
+        return minimizedSnapshot
+    }
+
+    /// Re-apply a parked snapshot. `stage` is set LAST so AppDelegate's resize
+    /// observer fires with the final stage already in place.
+    func applySnapshot(_ s: MinimizedSnapshot) {
+        isChipsExpanded     = s.isChipsExpanded
+        isFollowupsExpanded = s.isFollowupsExpanded
+        chipsTab            = s.chipsTab
+        userDragOffset      = s.userDragOffset
+        cachedResult        = s.cachedResult
+        additionalFileURLs  = s.additionalFileURLs
+        contentTruncated    = s.contentTruncated
+        customPrompt        = s.customPrompt
+        stage               = s.stage
+    }
+
+    // MARK: - Session URL remap
+
+    /// Update every reference to `old` in the live session to `new` after a rename or
+    /// move. Patches the primary stage URL (recomputing chip actions), the additional
+    /// files, any cached result, and the parked minimized snapshot. No-op if equal.
+    func remapSessionURL(from old: URL, to new: URL) {
+        guard old != new else { return }
+        func remap(_ u: URL) -> URL { u == old ? new : u }
+
+        // Keep the active history record's paths in sync (best-effort).
+        SessionHistoryStore.shared.remapPath(from: old, to: new)
+
+        // Additional files first so chip recomputation below sees the new list.
+        additionalFileURLs = additionalFileURLs.map(remap)
+
+        switch stage {
+        case .waitingForDrop:
+            break
+        case .chips(let u, _):
+            let primary = remap(u)
+            stage = .chips(url: primary,
+                           actions: FileInspector.suggestedActions(forAll: [primary] + additionalFileURLs))
+        case .loading(let u, let a):
+            stage = .loading(url: remap(u), action: a)
+        case .result(let u, let a, let t):
+            stage = .result(url: remap(u), action: a, text: t)
+        case .error(let u, let m):
+            stage = .error(url: remap(u), message: m)
+        }
+
+        if let cached = cachedResult {
+            switch cached {
+            case .result(let u, let a, let t): cachedResult = .result(url: remap(u), action: a, text: t)
+            case .chips(let u, let acts):      cachedResult = .chips(url: remap(u), actions: acts)
+            default: break
+            }
+        }
+
+        if var snap = minimizedSnapshot {
+            snap.additionalFileURLs = snap.additionalFileURLs.map(remap)
+            switch snap.stage {
+            case .chips(let u, let acts):      snap.stage = .chips(url: remap(u), actions: acts)
+            case .loading(let u, let a):       snap.stage = .loading(url: remap(u), action: a)
+            case .result(let u, let a, let t): snap.stage = .result(url: remap(u), action: a, text: t)
+            case .error(let u, let m):         snap.stage = .error(url: remap(u), message: m)
+            case .waitingForDrop:              break
+            }
+            minimizedSnapshot = snap
+        }
     }
 
     /// Partial reset: clears transient interaction flags without touching `stage`.

@@ -340,3 +340,161 @@ With tabs the visible row count changes per tab → the height must follow.
 ### Open/again-later
 - Stage-3 result-view "Suggested" rail intentionally NOT tabbed (scope-limited). Revisit if wanted.
 - Per-entry delete in the History tab (swipe/×) — out of scope unless requested; `clearHistory()` only.
+
+---
+
+## Feature — Minimize / restore overlay (v9.6)
+
+**Goal:** A `−` button next to `×` minimizes the overlay (squish into notch, hide). Clicking the
+menu-bar icon restores the minimized session. If nothing is minimized, the icon opens the menu as
+normal (no empty overlay pops open).
+
+**Design decision (confirm):** the menu-bar icon currently uses SwiftUI `MenuBarExtra`, which always
+opens its menu on click — cannot intercept. To make a left-click *restore*, replace `MenuBarExtra`
+with a custom `NSStatusItem` in `AppDelegate` whose button action is conditional:
+- **left-click**: minimized session exists → restore; else → toggle the menu popover.
+- **right-click**: always toggle the menu popover (so Settings/Quit stay reachable while minimized).
+The menu content (`MenuBarView`) is hosted in an `NSPopover` (`.transient`). App stays a menu-bar
+agent (`LSUIElement = YES`), `Settings` scene unchanged.
+
+### Steps
+- [x] **`OverlayViewModel`** — added `@Published var hasMinimizedSession`, `MinimizedSnapshot` struct +
+      private `minimizedSnapshot`. `minimizeCurrentSession() -> Bool` (no-op at waitingForDrop),
+      `consumeMinimizedSnapshot()`, `applySnapshot(_:)` (sets `stage` last). Snapshot cleared in
+      `setChips()`; **preserved through `reset()`** so minimize→hideOverlay→reset keeps it.
+- [x] **`MinimizeButton`** (OverlayView) — mirrors `CloseButton`, SF `minus`, neutral
+      `.liquidGlassCircle`. Posts `.minimizeOverlay`. Placed before `CloseButton` in the stage-3 icon
+      bar (always) and the chips/error header. **Gated to tag 1 (chips) + 4 (error)** — excluded from
+      loading (2) so an in-flight request can't complete into a hidden, reset stage.
+- [x] **`AppDelegate`** — `.minimizeOverlay` Notification + handler. `minimizeOverlay()` snapshots then
+      reuses `hideOverlay()`. `restoreMinimizedSession()` builds/reuses window, `applySnapshot`, sizes
+      via new `sizeForStage(_:)` (factored out of `resizeOverlay`), `place` + orderFront + monitors.
+- [x] **Replaced `MenuBarExtra`** with `NSStatusItem` (sparkles template) + transient `NSPopover`
+      hosting `MenuBarView`. `sendAction(on: [.leftMouseUp, .rightMouseUp])`; left→restore-or-menu,
+      right/ctrl→menu. Popover rebuilt per open (fresh dynamic labels). `MacNotchAIApp` keeps only
+      `Settings`.
+- [x] **`MenuBarView`** — `openSettings()` → `NSApp.sendAction(Selector(("showSettingsWindow:")), …)`.
+- [x] **Build** — `BUILD SUCCEEDED`, no errors/unused warnings.
+- [ ] **Manual test (user)**: minimize from chips/result → squish to notch, hides → drag a new file
+      still pops the pill → click icon restores exact session (stage, tab, expand state, position) →
+      with nothing minimized, icon opens the menu (no empty overlay) → right-click opens menu while
+      minimized → Settings… opens from the popover.
+- [x] **Lesson** captured (MENU-01): MenuBarExtra → NSStatusItem for conditional click; openSettings
+      from an NSPopover.
+
+---
+
+## Feature — File tools (modify session documents) (v9.7)
+
+**Goal:** Beyond AI actions, let the user *modify the actual files* held in the session. First cut
+(chosen by owner): **Show in Finder · Rename · Move to… · PDF → .txt · Stitch PDFs · Image resize /
+compress**. Media (video/audio) compression is a **later phase** (AVFoundation + optional
+user-installed ffmpeg; FileInspector's unsupported gate must relax then).
+
+**Constraints / decisions already settled:**
+- **Pure Apple frameworks only.** FileManager (rename/move), `NSWorkspace.activateFileViewerSelecting`
+  (reveal), `NSOpenPanel` (folder pick), PDFKit (text export + merge pages), ImageIO/CoreImage (resize
+  + recompress). **No ffmpeg bundled** (size + GPL/LGPL + hardened-runtime signing). ffmpeg, when the
+  media phase arrives, is *detected* if the user installed it (`/opt/homebrew/bin`, `/usr/local/bin`),
+  never shipped.
+- **Output policy: write next to the source** with a suffix + dedupe (`name-stitched.pdf`,
+  `name.txt`, `name-1024.jpg`). Minimizes TCC prompts (non-sandboxed, but first writes to
+  Desktop/Documents/Downloads can still prompt). Rename/Move are in-place moves of the original.
+- **Session URL remap.** Rename/Move change the file's URL — the live session must follow it. Add
+  `OverlayViewModel.remapSessionURL(from:to:)` to patch `stage`'s primary URL + `additionalFileURLs`
+  (and the minimized snapshot if present).
+
+### Open question for owner — UI surface (confirm before building)
+Where do the file tools live? Proposed **A**; B/C are alternatives.
+- **A (recommended): `•••` button on the file pill.** A small ellipsis-circle in `SingleFilePill` /
+  `FilePill` opens a SwiftUI `Menu` of type-gated `FileTool` items. Per-file, discoverable, no new
+  tab. Stitch PDFs appears only when ≥2 PDFs are in the session.
+- **B: a 4th "Tools" tab** beside Suggested/History/Custom. More room for options but mixes
+  file-mutation with AI-prompt UI and isn't per-file.
+- **C: right-click `.contextMenu` on the pill.** Zero chrome, but undiscoverable on macOS.
+
+### Steps (first cut)
+- [x] **`Core/FileTools.swift`** (engine; static, throwing). Funcs: `revealInFinder(_ urls:)`,
+      `rename(_ url:to:) -> URL` (extension preserved), `move(_ url:to folder:) -> URL`,
+      `exportPDFText(_ url:) -> URL` (PDFKit page `.string` join), `stitchPDFs(_ urls:) -> URL`
+      (new `PDFDocument` + `insert(page.copy(),at:)`), `resizeAndRecompressImage(_ url:,maxDimension:,
+      quality:) -> URL` (`CGImageSource` thumbnail downscale → `CGImageDestination` JPEG), private
+      `uniqueDestination(_:allowSame:)` (dedupe `-1`,`-2`). `FileToolError: LocalizedError`.
+- [x] **`FileTool` enum + type-gating.** `static func tools(for:sessionFiles:) -> [FileTool]`:
+      Reveal/Rename/Move always; +Export.txt and (Stitch when ≥2 session PDFs) for `.pdf`;
+      +Resize/Compress for images. Each case → SF symbol + title.
+- [x] **`UI/FileToolsMenu.swift`** — `FileToolsButton` (••• `Menu`, glass-circle default + `compact`
+      dark-badge variant). Dialogs via **AppKit** (proven from the floating panel; SwiftUI `.alert`
+      can fail to find a key window here): rename = `NSAlert` + `NSTextField`; move = `NSOpenPanel`
+      (`canChooseDirectories`); image = `NSAlert` w/ `NSPopUpButton` size presets + `NSSlider`
+      quality. **Errors = `NSAlert`.**
+- [x] **Confirmation = native, not an in-app banner** (deviation from the draft — avoids overflowing
+      `sizeForStage`'s fixed window height / fighting the resize loop): new outputs (pdf→txt, stitch,
+      image) are **revealed in Finder**; rename updates the pill live via `remapSessionURL`; move
+      remaps **and** reveals.
+- [x] **`OverlayViewModel.remapSessionURL(from:to:)`** — patches the live stage (recomputing chip
+      actions), `additionalFileURLs`, `cachedResult`, and the parked minimized snapshot.
+- [x] **Wired into pills** — `SingleFilePill` (••• next to Share, always visible) and multi-file
+      `FilePill` (compact ••• top-leading hover badge, mirroring the × badge).
+- [x] **Errors** — guarded (missing file, unreadable/empty PDF, unreadable image, <2 PDFs, write
+      failure); surfaced via `NSAlert`, no silent catch.
+- [x] **Build** — `BUILD SUCCEEDED`.
+- [ ] **Manual test (user)** — reveal opens Finder w/ file selected; rename updates pill + session
+      (AI action still targets the renamed file); move relocates + remaps; PDF→txt writes sibling
+      `.txt` + Reveal works; stitch merges 2+ PDFs in pill order; image resize/compress writes smaller
+      sibling; output dedupe doesn't clobber; banner + Reveal correct.
+- [ ] **Lesson** — capture any TCC/PDFKit/ImageIO/remap gotchas in `tasks/lessons.md`.
+
+### Deferred (not in first cut)
+- [ ] **Erase Metadata** (EXIF/GPS strip for images via ImageIO; PDF `documentAttributes` scrub).
+- [ ] **PDF → .md** (likely AI-assisted, not a pure extraction).
+- [ ] **Media compress / change resolution** (`AVAssetExportSession`; optional installed-ffmpeg
+      detection). Requires relaxing `FileInspector` unsupported-type gate for video/audio.
+
+---
+
+## Feature — Session history (last 10 sessions) (v9.8)
+
+**Goal:** remember the last 10 sessions (file + full AI conversation) and list them in a
+"Recent Sessions" submenu of the menu-bar dropdown, styled like the screenshot (file icon +
+name + date rows, "Clear History" footer, ⌥ to remove one). Clicking a row **reopens the full
+session** in the overlay (restore latest result, one-level back to the prior turn).
+
+**Design decisions (confirmed):** reopen full session · store ALL turns / restore latest ·
+menu-bar submenu (native NSMenu, matches screenshot).
+
+- [x] **`Models/SessionHistoryStore.swift`** (new, `@MainActor` `ObservableObject` singleton)
+  - `SessionTurn: Codable` = `{ actionRaw: String, promptTitle: String, resultText: String, date: Date }`
+    (`promptTitle` = typed question for freeform, else the action's title).
+  - `SessionRecord: Codable, Identifiable` = `{ id: UUID, primaryPath, additionalPaths: [String],
+    turns: [SessionTurn], updatedAt: Date }` + derived `fileName` / `fileURL`.
+  - `@Published private(set) var sessions: [SessionRecord]` (newest first, cap 10).
+  - Persist to JSON at `Application Support/<bundleID>/session_history.json` (conversation text is
+    too big for UserDefaults). Load on init; save after each mutation.
+  - `beginSession(primary:)` — set a fresh `pendingSessionID` (no record persisted until 1st turn,
+    so a dropped-but-unused file never clutters history).
+  - `recordTurn(primary:additional:action:prompt:result:)` — locate/create the pending record,
+    append the turn, refresh paths, bump `updatedAt`, move to front, trim to 10, save.
+  - `remove(id:)` / `clear()`.
+- [x] **Record turns** — hooked all four result sites (`ChipsColumnView` + `TwoColumnView`,
+      `runAction` + `runCustomPrompt`): after the AI `text` is obtained, `recordTurn(...)`
+      (prompt = typed text for freeform, nil otherwise). Errors are NOT recorded.
+- [x] **Begin session** — `beginSession(primary:)` in `OverlayViewModel.setChips(url:)`; paths
+      kept fresh on rename/move via `remapPath(from:to:)` in `remapSessionURL`. Reopen continues
+      the same record via `resumeSession(id:)` so further actions append (no duplicate).
+- [x] **Menu UI** (`AppDelegate.buildStatusMenu`) — "Recent Sessions" item with `.submenu`:
+      each record = `NSWorkspace.shared.icon(forFile:)` (32px) + 2-line `attributedTitle`
+      (name `labelColor` / `dd.MM.yy, HH:mm` `secondaryLabelColor` — adapts to light/dark).
+      `representedObject` = record id; action `menuOpenHistorySession(_:)`. Per row an `isAlternate`
+      ⌥ item (red "Remove …") → `menuRemoveHistorySession(_:)`. Footer: separator + "Clear History"
+      (`menuClearHistory`) + disabled "Hold ⌥ to remove a single session". Empty → "No recent sessions".
+- [x] **Reopen** (`AppDelegate.menuOpenHistorySession`) — builds a `MinimizedSnapshot`
+      (`stage = .result(primary, lastAction, lastText)`, `cachedResult` = prior turn if any,
+      `additionalFileURLs` = existing added files), injects via `vm.stageMinimized(_:)`, then
+      calls `restoreMinimizedSession()`. Missing file → still shows the saved text (fallback).
+- [x] **Build** — `BUILD SUCCEEDED`.
+- [ ] **Manual test (user)** — run actions on a file → session appears in submenu w/ icon + date;
+      run a 2nd action → same session updates (not duplicated); new drop → new entry; >10 sessions
+      trims oldest; click reopens overlay w/ latest result + back-arrow to prior; ⌥ shows per-row
+      remove; Clear History empties; survives app relaunch.
+- [ ] **Lesson** — capture any NSMenu attributedTitle/alternate-item or AppSupport-IO gotchas.

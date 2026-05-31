@@ -111,15 +111,15 @@ class OverlayWindow: NSPanel {
 
         let notchBottomY: CGFloat = 37
         var y = screen.frame.height - notchBottomY - size.height
-        var x: CGFloat
-        if anchorAtNotchCenter {
-            // Keep the notch centre at ~39 % from the window's left edge —
-            // the same visual relationship at every UI scale.
-            // At base size (280 pt card width) this equals the original 110 pt offset.
-            x = (screen.frame.width / 2) - (size.width * (110.0 / 280.0))
-        } else {
-            x = (screen.frame.width - size.width) / 2
-        }
+        // The notch camera sits at the screen's horizontal centre. Centre the
+        // window so the card — and its centre grabber handle — lands directly
+        // below the notch, at every stage and UI scale. This matches the stage-1
+        // pill (which is already centred). The legacy `anchorAtNotchCenter` branch
+        // biased the expanded card ~110 pt (≈39 %) left of centre, which pushed
+        // the *window centre* ~30 pt right of the notch (≈54 pt for the result
+        // card) — visible because the grabber no longer aligned with the camera.
+        _ = anchorAtNotchCenter   // retained for call-site compatibility
+        var x = (screen.frame.width - size.width) / 2
 
         // Apply the user's manual drag offset on TOP of the notch-anchored origin.
         // Screen coords are bottom-up, so +offset.height moves the window up.

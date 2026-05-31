@@ -377,6 +377,9 @@ private struct ChipsColumnView: View {
                     primary: fileURL, additional: additionalURLs)
                 let text = try await provider.complete(action: action, content: content, imageURL: imageURL)
                 OverlayViewModel.shared.contentTruncated = truncated
+                SessionHistoryStore.shared.recordTurn(
+                    primary: fileURL, additional: additionalURLs,
+                    action: action, prompt: nil, result: text)
                 setStage(.result(url: fileURL, action: action, text: text))
             } catch {
                 setStage(.error(url: fileURL, message: error.localizedDescription))
@@ -406,6 +409,9 @@ private struct ChipsColumnView: View {
                     : "Question: \(prompt)\n\n--- Documents ---\n\(baseContent)"
                 let text = try await provider.complete(action: action, content: finalContent, imageURL: imageURL)
                 OverlayViewModel.shared.contentTruncated = truncated
+                SessionHistoryStore.shared.recordTurn(
+                    primary: fileURL, additional: additionalURLs,
+                    action: action, prompt: prompt, result: text)
                 setStage(.result(url: fileURL, action: action, text: text))
             } catch {
                 setStage(.error(url: fileURL, message: error.localizedDescription))
@@ -425,7 +431,9 @@ private struct ChipsColumnView: View {
     }
 
     private var chipsTabBar: some View {
-        HStack(spacing: 6 * scale) {
+        // Spacing 0: each tabButton already carries transparent hit-padding,
+        // so the buttons sit flush with no dead zones between them.
+        HStack(spacing: 0) {
             tabButton(.suggested, icon: "sparkles.2",        help: "Suggested")
             tabButton(.history,   icon: "list.bullet",       help: "History")
             tabButton(.custom,    icon: "slider.vertical.3",  help: "Custom prompts")
@@ -454,6 +462,13 @@ private struct ChipsColumnView: View {
                                 .strokeBorder(Color.white.opacity(selected ? 0.16 : 0.0), lineWidth: 0.5)
                         )
                 )
+                // Visible chip stays 34×24, but the tappable area fills the
+                // full tab-bar height and a wider span so the buttons are
+                // easier to hit. Leading-align the visible chip so the first
+                // icon stays flush with the chip rows below (no 5px drift).
+                .frame(width: 44 * scale, height: ChipsLayout.tabBarHeight * scale,
+                       alignment: .leading)
+                .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .help(help)
@@ -752,6 +767,9 @@ private struct TwoColumnView: View {
 
             Spacer(minLength: 0)
 
+            // Minimize — park the session; restore from the menu-bar icon.
+            MinimizeButton()
+
             // Close — matched so it animates from FileHeaderView's position
             CloseButton()
                 .matchedGeometryEffect(id: "closeBtn", in: closeNS)
@@ -833,6 +851,9 @@ private struct TwoColumnView: View {
                     primary: fileURL, additional: additionalURLs)
                 let text = try await provider.complete(action: action, content: content, imageURL: imageURL)
                 OverlayViewModel.shared.contentTruncated = truncated
+                SessionHistoryStore.shared.recordTurn(
+                    primary: fileURL, additional: additionalURLs,
+                    action: action, prompt: nil, result: text)
                 setStage(.result(url: fileURL, action: action, text: text))
             } catch {
                 setStage(.error(url: fileURL, message: error.localizedDescription))
@@ -858,6 +879,9 @@ private struct TwoColumnView: View {
                     : "Question: \(prompt)\n\n--- Documents ---\n\(baseContent)"
                 let text = try await provider.complete(action: action, content: finalContent, imageURL: imageURL)
                 OverlayViewModel.shared.contentTruncated = truncated
+                SessionHistoryStore.shared.recordTurn(
+                    primary: fileURL, additional: additionalURLs,
+                    action: action, prompt: prompt, result: text)
                 setStage(.result(url: fileURL, action: action, text: text))
             } catch {
                 setStage(.error(url: fileURL, message: error.localizedDescription))
@@ -958,6 +982,15 @@ private struct FileHeaderView: View {
                     removal:   .scale(scale: 0.7).combined(with: .opacity)
                                                .animation(.easeIn(duration: 0.10))
                 ))
+            }
+
+            // ── Minimize ───────────────────────────────────────────────────────
+            // Parks the session and hides the overlay; the menu-bar icon restores it.
+            // Shown for chips (1) and error (4) only: result (3) has its own button in
+            // the stage-3 icon bar, and loading (2) is excluded so an in-flight request
+            // can't complete into a hidden, reset stage (the reply would be lost).
+            if vm.stage.tag == 1 || vm.stage.tag == 4 {
+                MinimizeButton()
             }
 
             // ── Close ────────────────────────────────────────────────────────
@@ -1144,7 +1177,8 @@ private struct SingleFilePill: View {
             }
             .fixedSize(horizontal: false, vertical: true)
 
-            ShareButton(fileURL: fileURL)
+            // ••• now owns Share too (see FileToolsButton) — no separate share button.
+            FileToolsButton(fileURL: fileURL)
         }
         .padding(.horizontal, 9 * scale)
         .padding(.vertical, 7 * scale)
@@ -1231,6 +1265,15 @@ private struct FilePill: View {
                             .strokeBorder(Color.white.opacity(0.13), lineWidth: 0.5)
                     )
             )
+            // ••• file-tools badge — top-leading corner, visible on hover
+            .overlay(alignment: .topLeading) {
+                if isHovering {
+                    FileToolsButton(fileURL: fileURL, compact: true)
+                        .offset(x: -4 * scale, y: -4 * scale)
+                        .transition(.scale(scale: 0.5).combined(with: .opacity)
+                            .animation(.spring(response: 0.20, dampingFraction: 0.68)))
+                }
+            }
             // × remove badge — top-trailing corner, visible on hover
             .overlay(alignment: .topTrailing) {
                 if isHovering, let onRemove {
@@ -1301,9 +1344,9 @@ private struct FilePill: View {
 
 // MARK: - Share button
 
-/// Circular share button in the file header.
-/// Opens a native macOS Menu with AirDrop, Messages, Mail and Copy to Clipboard.
-/// Accepts one or more URLs — all files are passed to each sharing service together.
+/// Circular share button in the file header. Presents the native macOS share sheet
+/// (NSSharingServicePicker) via `ShareLink` — full service list + extensions.
+/// Accepts one or more URLs; all files are shared together.
 private struct ShareButton: View {
     /// All files to share. Pass a single-element array for single-file sessions.
     let fileURLs: [URL]
@@ -1314,49 +1357,12 @@ private struct ShareButton: View {
     init(fileURL: URL) { fileURLs = [fileURL] }
     init(fileURLs: [URL]) { self.fileURLs = fileURLs }
 
-    private var items: [Any] { fileURLs.map { $0 as NSURL } }
     private var tooltip: String {
         fileURLs.count == 1 ? "Share file" : "Share \(fileURLs.count) files"
     }
 
     var body: some View {
-        Menu {
-            // ── Sharing services ────────────────────────────────────────────
-            Button {
-                NSSharingService(named: .sendViaAirDrop)?.perform(withItems: items)
-            } label: {
-                Label("AirDrop", systemImage: "wifi")
-            }
-            .disabled(NSSharingService(named: .sendViaAirDrop) == nil)
-
-            Button {
-                NSSharingService(named: .composeMessage)?.perform(withItems: items)
-            } label: {
-                Label("Messages", systemImage: "message.fill")
-            }
-            .disabled(NSSharingService(named: .composeMessage) == nil)
-
-            Button {
-                NSSharingService(named: .composeEmail)?.perform(withItems: items)
-            } label: {
-                Label("Mail", systemImage: "envelope.fill")
-            }
-            .disabled(NSSharingService(named: .composeEmail) == nil)
-
-            Divider()
-
-            // ── Local action ─────────────────────────────────────────────────
-            Button {
-                NSPasteboard.general.clearContents()
-                NSPasteboard.general.writeObjects(fileURLs.map { $0 as NSURL })
-            } label: {
-                Label(
-                    fileURLs.count == 1 ? "Copy to Clipboard" : "Copy All to Clipboard",
-                    systemImage: "doc.on.doc.fill"
-                )
-            }
-
-        } label: {
+        ShareLink(items: fileURLs) {
             Image(systemName: "square.and.arrow.up")
                 .font(.system(size: 8 * scale, weight: .semibold))
                 .foregroundColor(.white.opacity(isHovered ? 1.0 : 0.60))
@@ -1372,8 +1378,7 @@ private struct ShareButton: View {
                         )
                 )
         }
-        .menuStyle(.borderlessButton)
-        .menuIndicator(.hidden)
+        .buttonStyle(.plain)
         .fixedSize()
         .onHover { isHovered = $0 }
         .animation(.easeInOut(duration: 0.12), value: isHovered)
@@ -1443,6 +1448,41 @@ private struct CloseButton: View {
         .buttonStyle(.plain)
         .onHover { isHovered = $0 }
         .animation(.easeInOut(duration: 0.12), value: isHovered)
+    }
+}
+
+// MARK: - Minimize button
+
+/// Small − button — parks the current session and squishes the overlay into the
+/// notch. Posts a notification so AppDelegate can snapshot the session and tear the
+/// window down; clicking the menu-bar icon restores it.
+private struct MinimizeButton: View {
+    @State private var isHovered = false
+    @Environment(\.uiScale) private var scale
+
+    var body: some View {
+        Button {
+            NotificationCenter.default.post(name: .minimizeOverlay, object: nil)
+        } label: {
+            Image(systemName: "minus")
+                .font(.system(size: 8 * scale, weight: .bold))
+                .foregroundColor(.white.opacity(isHovered ? 1.0 : 0.60))
+                .frame(width: 22 * scale, height: 22 * scale)
+                // Matches the collapse / share buttons: a subtle white glass circle,
+                // not the heavier liquid-glass tint (which read too dark beside them).
+                .background(
+                    Circle()
+                        .fill(Color.white.opacity(isHovered ? 0.12 : 0.06))
+                        .overlay(Circle().strokeBorder(
+                            Color.white.opacity(isHovered ? 0.22 : 0.12),
+                            lineWidth: 0.5
+                        ))
+                )
+        }
+        .buttonStyle(.plain)
+        .onHover { isHovered = $0 }
+        .animation(.easeInOut(duration: 0.12), value: isHovered)
+        .help("Minimize")
     }
 }
 
@@ -1628,7 +1668,9 @@ struct ActionChip: View {
             )
         }
         .buttonStyle(.plain)
-        .scaleEffect(isHovered ? 1.03 : 1.0)
+        // Grow rightward from the leading edge so the hover bump doesn't push
+        // the left edge past the card's leading inset and clip.
+        .scaleEffect(isHovered ? 1.03 : 1.0, anchor: .leading)
         .animation(.spring(response: 0.22, dampingFraction: 0.65), value: isHovered)
         .onHover { isHovered = $0 }
         .disabled(isLoading)
