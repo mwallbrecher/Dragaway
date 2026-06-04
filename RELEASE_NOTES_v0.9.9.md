@@ -39,9 +39,7 @@ When a tool creates a new file, AI Drop shows a result card placing the **new fi
 ## Install
 
 1. Download **AIDrop-0.9.9.dmg** below.
-2. **Before opening it**, strip the quarantine flag (this build is signed but **not notarized**):
-   - Open **Terminal**, type `xattr -cr ` (with a trailing space), drag the downloaded DMG into the window, press **Return**.
-3. Open the DMG and drag **MacNotchAI.app** into **Applications**.
-4. Launch it — it lives in your menu bar (✦ icon). On first launch, grant Accessibility (for drag detection) and pick your AI provider.
+2. Open the DMG and drag **MacNotchAI.app** into **Applications**.
+3. Launch it — it lives in your menu bar (✦ icon). On first launch, grant Accessibility (for drag detection) and pick your AI provider.
 
-> This DMG is signed with a Developer ID certificate but is **not notarized**, so Gatekeeper needs the `xattr -cr` step above. A notarized build will follow.
+> This DMG is signed with a Developer ID certificate and **notarized by Apple**, so it opens normally — no Gatekeeper workaround needed.
