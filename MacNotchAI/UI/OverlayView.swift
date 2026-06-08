@@ -732,15 +732,27 @@ private struct ChipsColumnView: View {
                     .onChange(of: outputFieldFocused) { _, focused in
                         if !focused && editingOutputPath { commitOutputPath() }   // commit on blur
                     }
+                    .padding(.horizontal, 8 * scale)
+                    .padding(.vertical, 5 * scale)
+                    .frame(maxWidth: .infinity)
+                    .background(outputFieldBox(active: true))
             } else {
-                Text(display)
-                    .font(.system(size: 11.5 * scale, weight: .medium))
-                    .foregroundColor(.white.opacity(override != nil ? 0.92 : 0.6))
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-                    .help("Click to edit — \(dir.path)")
-                    .contentShape(Rectangle())
-                    .onTapGesture { beginEditingOutputPath(dir) }
+                // A Button (reliable hit-testing in the ScrollView) styled as a text field so the
+                // non-editing state reads as an input you can click into.
+                Button { beginEditingOutputPath(dir) } label: {
+                    Text(display)
+                        .font(.system(size: 11.5 * scale, weight: .medium))
+                        .foregroundColor(.white.opacity(override != nil ? 0.92 : 0.55))
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                        .padding(.horizontal, 8 * scale)
+                        .padding(.vertical, 5 * scale)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(outputFieldBox(active: false))
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .help("Click to edit — \(dir.path)")
                 if override != nil {
                     Button { vm.sessionOutputOverride = .sibling } label: {
                         Image(systemName: "xmark.circle.fill")
@@ -751,7 +763,6 @@ private struct ChipsColumnView: View {
                     .help("Reset to the file’s folder for this session")
                 }
             }
-            Spacer(minLength: 4 * scale)
             Button(action: pickOutputFolder) {
                 Image(systemName: "folder.badge.plus")
                     .font(.system(size: 12 * scale, weight: .medium))
@@ -776,6 +787,17 @@ private struct ChipsColumnView: View {
                 .overlay(RoundedRectangle(cornerRadius: 10 * scale, style: .continuous)
                     .strokeBorder(Color.white.opacity(0.10), lineWidth: 0.5))
         )
+    }
+
+    /// Text-field-style box for the output path (subtle inset + border; accent border while editing).
+    private func outputFieldBox(active: Bool) -> some View {
+        RoundedRectangle(cornerRadius: 7 * scale, style: .continuous)
+            .fill(Color.white.opacity(active ? 0.10 : 0.07))
+            .overlay(
+                RoundedRectangle(cornerRadius: 7 * scale, style: .continuous)
+                    .strokeBorder(active ? Color.accentColor.opacity(0.7) : Color.white.opacity(0.18),
+                                  lineWidth: active ? 1 : 0.6)
+            )
     }
 
     private func beginEditingOutputPath(_ dir: URL) {
