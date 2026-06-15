@@ -84,6 +84,9 @@ final class ClipboardPicker: NSObject, NSWindowDelegate {
 
         NSApp.activate(ignoringOtherApps: true)
         p.makeKeyAndOrderFront(nil)
+        // Recompute the drop shadow against the rounded-glass alpha mask (next runloop,
+        // after the SwiftUI content has laid out) so the corners aren't rectangular.
+        DispatchQueue.main.async { p.invalidateShadow() }
         startMonitors()
     }
 
@@ -185,12 +188,41 @@ struct ClipboardPickerView: View {
                 .font(.system(size: 14 * scale, weight: .semibold))
                 .foregroundStyle(.white)
             Spacer()
+            if !store.items.isEmpty {
+                Button(action: clearHistory) {
+                    HStack(spacing: 4 * scale) {
+                        Image(systemName: "trash")
+                            .font(.system(size: 10 * scale, weight: .semibold))
+                        Text("Clear History")
+                            .font(.system(size: 11 * scale, weight: .medium))
+                    }
+                    .foregroundStyle(Color(red: 1.0, green: 0.30, blue: 0.28))
+                    .padding(.horizontal, 8 * scale)
+                    .padding(.vertical, 4 * scale)
+                    .background(
+                        Capsule(style: .continuous)
+                            .fill(Color.red.opacity(0.14))
+                            .overlay(Capsule(style: .continuous)
+                                .strokeBorder(Color.red.opacity(0.30), lineWidth: 0.5))
+                    )
+                }
+                .buttonStyle(.plain)
+                .help("Clear all clipboard history")
+            }
             Text("⌃⌘V")
                 .font(.system(size: 11 * scale, weight: .medium, design: .rounded))
                 .foregroundStyle(.white.opacity(0.5))
         }
         .padding(.horizontal, 18 * scale)
         .padding(.bottom, 12 * scale)
+    }
+
+    /// Confirm-then-wipe all clipboard history (no undo), then dismiss the picker.
+    private func clearHistory() {
+        if confirmDestructive(title: "Clear Clipboard History?", confirmTitle: "Clear History") {
+            ClipboardHistoryStore.shared.clear()
+        }
+        ClipboardPicker.shared.hide()
     }
 
     private var emptyState: some View {

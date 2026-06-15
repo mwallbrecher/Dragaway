@@ -89,6 +89,10 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             self, selector: #selector(handleShowOutputDirectory),
             name: .showOutputDirectory, object: nil
         )
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(handleShowScripts),
+            name: .showScripts, object: nil
+        )
 
         // Finder "Add to AI Drop" Quick Action → opens Stage 2 with the selected files.
         NotificationCenter.default.addObserver(
@@ -136,6 +140,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     @objc private func handleShowCustomDisable() { showCustomDisable() }
     @objc private func handleShowFavoriteTools() { showSettings(section: .favoriteTools) }
     @objc private func handleShowOutputDirectory() { showSettings(section: .outputDirectory) }
+    @objc private func handleShowScripts() { showSettings(section: .scripts) }
 
     // MARK: - Finder "Add to AI Drop" Quick Action
 
@@ -189,7 +194,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let (size, anchorLeft) = sizeForStage(OverlayViewModel.shared.stage)
         overlayWindow?.alphaValue = 1
         overlayWindow?.place(size: size, anchorAtNotchCenter: anchorLeft)
-        overlayWindow?.orderFront(nil)
+        // Grab key + activate so the card opens FOCUSED (type right away). Losing focus
+        // later is fine — the overlay stays vivid via the forced controlActiveState.
+        overlayWindow?.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
         startDismissMonitors()
     }
@@ -761,7 +768,8 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let (size, anchorLeft) = sizeForStage(snap.stage)
         overlayWindow?.alphaValue = 1
         overlayWindow?.place(size: size, anchorAtNotchCenter: anchorLeft)
-        overlayWindow?.orderFront(nil)
+        overlayWindow?.makeKeyAndOrderFront(nil)   // reopen a session focused
+        NSApp.activate(ignoringOtherApps: true)
         startDismissMonitors()
     }
 
@@ -1256,7 +1264,8 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                                             suggested: actions.count,
                                             history: store.history.count,
                                             custom: store.customPrompts.count,
-                                            utilities: utilCount)
+                                            utilities: utilCount,
+                                            scripts: ScriptsStore.shared.scripts.count)
                 let contentH = ChipsLayout.contentHeight(rows: rows)
                 // Tool launch row ("Open in"): full height when the resolved list has
                 // favorites, a single muted hint line when empty (matches ToolRow).
@@ -1417,6 +1426,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         case .customPrompt:    h = 360
         case .favoriteTools:   h = 520
         case .outputDirectory: h = 360
+        case .scripts:         h = 560
         case .aiProvider:      h = 480
         }
         return NSSize(width: 460, height: h)
@@ -1517,6 +1527,7 @@ extension Notification.Name {
     static let showCustomDisable = Notification.Name("com.aidrop.showCustomDisable")
     static let showFavoriteTools = Notification.Name("com.aidrop.showFavoriteTools")
     static let showOutputDirectory = Notification.Name("com.aidrop.showOutputDirectory")
+    static let showScripts          = Notification.Name("com.aidrop.showScripts")
     static let addFilesFromShare = Notification.Name("com.aidrop.addFilesFromShare")
 }
 

@@ -102,7 +102,8 @@ struct OverlayView: View {
                             value: dragMonitor.isDraggingFile && vm.pendingDroppedURLs.isEmpty)
                 .animation(.spring(response: 0.35, dampingFraction: 0.72),
                             value: vm.pendingDroppedURLs.isEmpty)
-                .liquidGlass(cornerRadius: cornerRadius, tintOpacity: 0.60)
+                .liquidGlass(cornerRadius: cornerRadius, tintOpacity: 0.60, verticalFade: true,
+                             material: .hudWindow, emphasized: false)
                 // Elastic landing deform on expand/collapse. Anchor .top pins the
                 // notch edge so only the BOTTOM edge reacts. Purely visual (a
                 // scaleEffect — NSView bounds + window size unchanged), so it can
@@ -133,6 +134,9 @@ struct OverlayView: View {
             }
         }
         .environment(\.uiScale, scale)
+        // The overlay is a floating HUD that often isn't the key window — force the active
+        // control appearance so Liquid Glass + buttons never render greyed/desaturated.
+        .environment(\.controlActiveState, .active)
         .compositingGroup()
 
         // ── Content hide on collapse ──────────────────────────────────────────
@@ -336,6 +340,7 @@ private struct ChipsColumnView: View {
     @ObservedObject private var vm = OverlayViewModel.shared
     @ObservedObject private var store = PromptStore.shared
     @ObservedObject private var outputStore = OutputDirectoryStore.shared
+    @ObservedObject private var scriptsStore = ScriptsStore.shared
     @Environment(\.uiScale) private var scale
 
     // Inline "add custom prompt" composer state (Custom tab "+" row).
@@ -448,7 +453,8 @@ private struct ChipsColumnView: View {
                          suggested: actions.count,
                          history: store.history.count,
                          custom: store.customPrompts.count,
-                         utilities: utilityTools.count)
+                         utilities: utilityTools.count,
+                         scripts: scriptsStore.scripts.count)
     }
 
     private var chipsTabBar: some View {
@@ -467,6 +473,9 @@ private struct ChipsColumnView: View {
             }
             tabGroup(caption: "Utilities", captionIcon: "wrench.and.screwdriver") {
                 tabButton(.utilities, icon: "wrench.and.screwdriver", help: "File utilities")
+            }
+            tabGroup(caption: "Scripts", captionIcon: "terminal") {
+                tabButton(.scripts, icon: "terminal", help: "Run a saved command")
             }
             Spacer(minLength: 0)
         }
@@ -578,6 +587,19 @@ private struct ChipsColumnView: View {
                             }
                         }
                     }
+                case .scripts:
+                    // User-defined shell commands run against the dropped file's project.
+                    if scriptsStore.scripts.isEmpty {
+                        emptyHint("No scripts yet — add one in Settings.")
+                    } else {
+                        ForEach(scriptsStore.scripts) { script in
+                            MenuActionRow(title: script.name,
+                                          systemImage: script.inTerminal ? "terminal" : "play.circle") {
+                                ScriptRunner.run(script, fileURL: fileURL)
+                            }
+                        }
+                    }
+                    scriptsSettingsRow
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -704,6 +726,27 @@ private struct ChipsColumnView: View {
         if !t.isEmpty { withAnimation(.easeInOut(duration: 0.22)) { store.addCustom(t) } }
         newCustom = ""
         withAnimation(.easeInOut(duration: 0.2)) { isAddingCustom = false }
+    }
+
+    /// Footer of the Scripts tab — opens Settings → Scripts to add/edit (name, command, run mode).
+    private var scriptsSettingsRow: some View {
+        Button { NotificationCenter.default.post(name: .showScripts, object: nil) } label: {
+            HStack(spacing: 6 * scale) {
+                Image(systemName: "plus")
+                    .font(.system(size: 11 * scale, weight: .bold))
+                Text("Add / edit scripts")
+                    .font(.system(size: 12 * scale, weight: .medium))
+            }
+            .foregroundColor(.white.opacity(0.55))
+            .padding(.horizontal, 14 * scale)
+            .padding(.vertical, 8 * scale)
+            .background(
+                Capsule(style: .continuous)
+                    .strokeBorder(style: StrokeStyle(lineWidth: 0.5, dash: [3, 3]))
+                    .foregroundColor(.white.opacity(0.18))
+            )
+        }
+        .buttonStyle(.plain)
     }
 
     // MARK: - Utilities-tab output folder control
@@ -2321,17 +2364,8 @@ struct ActionChip: View {
             }
             .padding(.horizontal, 14 * scale)
             .padding(.vertical, 8 * scale)
-            // Flat capsule — no blur, no specular.  Simple stroke ring
-            // differentiates the chip without competing with the card glass.
-            .background(
-                Capsule(style: .continuous)
-                    .fill(Color.white.opacity(isHovered ? 0.10 : 0.05))
-                    .overlay(
-                        Capsule(style: .continuous)
-                            .strokeBorder(Color.white.opacity(isHovered ? 0.18 : 0.10),
-                                          lineWidth: 0.5)
-                    )
-            )
+            // Liquid Glass capsule (real glassEffect on macOS 26; subtle blur fallback below).
+            .liquidGlassCapsule(tintOpacity: isHovered ? 0.12 : 0.20)
         }
         .buttonStyle(.plain)
         // Grow rightward from the leading edge so the hover bump doesn't push

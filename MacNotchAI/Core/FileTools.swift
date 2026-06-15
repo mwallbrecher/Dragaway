@@ -150,6 +150,38 @@ enum FileTools {
         return target
     }
 
+    // MARK: PDF → Word (.docx)
+
+    /// Converts a PDF to an editable Word `.docx` using PDFKit's per-page `attributedString`
+    /// (text + font sizes/styles) exported via `NSAttributedString`'s built-in OfficeOpenXML
+    /// writer. Pure Apple, local. **Text-only fidelity** — like Export-as-Markdown, PDFs carry
+    /// no real paragraph/table/layout structure, so the result is editable text, not a layout copy.
+    @discardableResult
+    static func exportPDFDocx(_ url: URL) throws -> URL {
+        guard let doc = PDFDocument(url: url) else { throw FileToolError.pdfUnreadable(url) }
+        guard doc.pageCount > 0 else { throw FileToolError.pdfEmpty(url) }
+
+        let combined = NSMutableAttributedString()
+        for i in 0..<doc.pageCount {
+            guard let page = doc.page(at: i) else { continue }
+            if let attr = page.attributedString, attr.length > 0 {
+                combined.append(attr)
+            } else if let s = page.string, !s.isEmpty {
+                combined.append(NSAttributedString(string: s))
+            }
+            if i < doc.pageCount - 1 { combined.append(NSAttributedString(string: "\n\n")) }
+        }
+
+        let target = uniqueDestination(url.deletingPathExtension().appendingPathExtension("docx"))
+        do {
+            let data = try combined.data(
+                from: NSRange(location: 0, length: combined.length),
+                documentAttributes: [.documentType: NSAttributedString.DocumentType.officeOpenXML])
+            try data.write(to: target)
+        } catch { throw FileToolError.writeFailed(error.localizedDescription) }
+        return target
+    }
+
     // ── Markdown conversion helpers ──────────────────────────────────────────
 
     private static let bulletChars: Set<Character> = ["•", "‣", "◦", "▪", "⁃", "·", "-", "–", "—", "*"]
@@ -925,6 +957,8 @@ enum FileTool: Identifiable, Hashable {
     case pdfToText
     case pdfToMarkdown
     case markdownToPDF
+    case pdfToDocx
+    case docxToPDF
     case pdfSplit
     case pdfToImages
     case stitchPDFs
@@ -963,7 +997,7 @@ enum FileTool: Identifiable, Hashable {
     var isAsync: Bool {
         switch self {
         case .extractAudio, .transcribe, .videoToGIF, .extractFrame, .compressVideo,
-             .muteVideo, .convertToMP4, .convertToMOV, .convertToM4A, .markdownToPDF:
+             .muteVideo, .convertToMP4, .convertToMOV, .convertToM4A, .markdownToPDF, .docxToPDF:
             return true
         default:
             return false
@@ -978,6 +1012,8 @@ enum FileTool: Identifiable, Hashable {
         case .pdfToText:     return "Export as .txt"
         case .pdfToMarkdown: return "Export as Markdown"
         case .markdownToPDF: return "Export as PDF"
+        case .pdfToDocx:     return "Export as Word (.docx)"
+        case .docxToPDF:     return "Export as PDF"
         case .pdfSplit:      return "Split into Pages"
         case .pdfToImages:   return "Pages to Images"
         case .stitchPDFs:    return "Stitch PDFs"
@@ -1017,6 +1053,8 @@ enum FileTool: Identifiable, Hashable {
         case .pdfToText:     return "Exported as Text"
         case .pdfToMarkdown: return "Exported as Markdown"
         case .markdownToPDF: return "Exported as PDF"
+        case .pdfToDocx:     return "Exported as Word"
+        case .docxToPDF:     return "Exported as PDF"
         case .pdfSplit:      return "Split into Pages"
         case .pdfToImages:   return "Pages to Images"
         case .stitchPDFs:    return "Stitched PDFs"
@@ -1056,6 +1094,8 @@ enum FileTool: Identifiable, Hashable {
         case .pdfToText:     return "doc.plaintext"
         case .pdfToMarkdown: return "doc.richtext"
         case .markdownToPDF: return "arrow.up.doc"
+        case .pdfToDocx:     return "doc.text"
+        case .docxToPDF:     return "arrow.up.doc"
         case .pdfSplit:      return "scissors"
         case .pdfToImages:   return "photo.stack"
         case .stitchPDFs:    return "doc.on.doc"
@@ -1093,6 +1133,7 @@ enum FileTool: Identifiable, Hashable {
         if ext == "pdf" {
             list.append(.pdfToText)
             list.append(.pdfToMarkdown)
+            list.append(.pdfToDocx)
             list.append(.pdfSplit)
             list.append(.pdfToImages)
             // Stitch is always offered for a PDF; the menu disables it (with a hover
@@ -1116,6 +1157,9 @@ enum FileTool: Identifiable, Hashable {
         }
         if ext == "md" || ext == "markdown" {
             list.append(.markdownToPDF)
+        }
+        if ext == "docx" || ext == "doc" {
+            list.append(.docxToPDF)
         }
         // Text / code / data (batch 3): line tools + Base64 — synchronous, zero API cost.
         if FileInspector.isTextFile(url) {

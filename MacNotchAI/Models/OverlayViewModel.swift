@@ -43,7 +43,7 @@ class OverlayViewModel: ObservableObject {
     /// Custom = user-curated prompts. Observed by AppDelegate so the chips window
     /// resizes to the active tab's row count.
     enum ChipsTab: Int, CaseIterable {
-        case suggested, history, custom, utilities
+        case suggested, history, custom, utilities, scripts
     }
 
     enum Stage {
@@ -529,12 +529,13 @@ enum ChipsLayout {
     /// Logical row count for a tab BEFORE clamping. History shows a 1-row empty
     /// placeholder; Custom always includes the trailing "+ add" row.
     static func rows(for tab: OverlayViewModel.ChipsTab,
-                     suggested: Int, history: Int, custom: Int, utilities: Int) -> Int {
+                     suggested: Int, history: Int, custom: Int, utilities: Int, scripts: Int) -> Int {
         switch tab {
         case .suggested: return max(suggested, 1)
         case .history:   return history == 0 ? 1 : history + 1   // +1 = "Clear All" footer row
         case .custom:    return custom + 1
         case .utilities: return max(utilities, 1) + 1   // +1 ≈ the output-folder row
+        case .scripts:   return max(scripts, 1) + 1     // +1 = "Add / edit in Settings" row
         }
     }
 }

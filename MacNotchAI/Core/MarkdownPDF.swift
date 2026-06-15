@@ -21,6 +21,20 @@ enum MarkdownPDF {
         return target
     }
 
+    /// Word `.docx`/`.doc` → PDF. Reads the document into an `NSAttributedString` (Apple's
+    /// built-in OfficeOpenXML reader — preserves text, headings, bold/italic, lists, basic
+    /// tables/images), exports it as HTML, then runs the same WebKit → paginated-PDF pipeline.
+    static func exportDocxToPDF(_ url: URL) async throws -> URL {
+        let attr = try NSAttributedString(url: url, options: [:], documentAttributes: nil)
+        let htmlData = try attr.data(
+            from: NSRange(location: 0, length: attr.length),
+            documentAttributes: [.documentType: NSAttributedString.DocumentType.html])
+        let html = String(decoding: htmlData, as: UTF8.self)
+        let target = uniqueDestination(url.deletingPathExtension().appendingPathExtension("pdf"))
+        try await renderPDF(html: html, baseURL: url.deletingLastPathComponent(), to: target)
+        return target
+    }
+
     // MARK: - WebKit render → PDF
 
     private static func renderPDF(html: String, baseURL: URL, to target: URL) async throws {

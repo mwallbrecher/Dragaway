@@ -64,6 +64,8 @@ enum FileToolActions {
             runFile(tool, original: fileURL) { try FileTools.exportPDFText(fileURL) }
         case .pdfToMarkdown:
             runFile(tool, original: fileURL) { try FileTools.exportPDFMarkdown(fileURL) }
+        case .pdfToDocx:
+            runFile(tool, original: fileURL) { try FileTools.exportPDFDocx(fileURL) }
 
         case .pdfSplit:
             runFile(tool, original: fileURL) { try FileTools.splitPDF(fileURL) }
@@ -118,7 +120,7 @@ enum FileToolActions {
 
         // Async ops (media + Markdown→PDF) must go through `performAsync`, not here.
         case .extractAudio, .transcribe, .videoToGIF, .extractFrame, .compressVideo,
-             .muteVideo, .convertToMP4, .convertToMOV, .convertToM4A, .markdownToPDF:
+             .muteVideo, .convertToMP4, .convertToMOV, .convertToM4A, .markdownToPDF, .docxToPDF:
             assertionFailure("async tool \(tool) must be dispatched via performAsync")
         }
     }
@@ -140,6 +142,7 @@ enum FileToolActions {
             case .convertToMOV:  output = try await MediaTools.convertVideo(fileURL, to: .mov, ext: "mov")
             case .convertToM4A:  output = try await MediaTools.convertAudio(fileURL)
             case .markdownToPDF: output = try await MarkdownPDF.export(fileURL)
+            case .docxToPDF:     output = try await MarkdownPDF.exportDocxToPDF(fileURL)
             default:             return   // non-async tools go through `perform`
             }
             if let output {

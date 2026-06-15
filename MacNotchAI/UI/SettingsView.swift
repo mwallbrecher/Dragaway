@@ -5,7 +5,7 @@ import UniformTypeIdentifiers
 /// scoped to a single setting (`.windowSize` / `.customPrompt` / `.favoriteTools` /
 /// `.aiProvider`); the system ⌘, Settings scene still shows everything (`.all`).
 enum SettingsSection: String {
-    case all, windowSize, customPrompt, favoriteTools, outputDirectory, aiProvider
+    case all, windowSize, customPrompt, favoriteTools, outputDirectory, scripts, aiProvider
 
     /// Title for the settings window when opened scoped to this section.
     var windowTitle: String {
@@ -15,6 +15,7 @@ enum SettingsSection: String {
         case .customPrompt:    return "Custom Prompts"
         case .favoriteTools:   return "Favorite Tools"
         case .outputDirectory: return "Output Directory"
+        case .scripts:         return "Scripts"
         case .aiProvider:      return "AI Provider"
         }
     }
@@ -30,6 +31,7 @@ struct SettingsView: View {
     @ObservedObject private var promptStore = PromptStore.shared
     @ObservedObject private var toolsStore  = FavoriteToolsStore.shared
     @ObservedObject private var outputStore = OutputDirectoryStore.shared
+    @ObservedObject private var scriptsStore = ScriptsStore.shared
     @State private var apiKey = ""
     @State private var ollamaAvailable = false
     @State private var saved = false
@@ -170,6 +172,15 @@ struct SettingsView: View {
                 .padding(.bottom, 4)
 
                 outputDirectoryBody
+            }
+            }
+
+            if shows(.scripts) {
+            Section(header: Text("Scripts"),
+                    footer: Text("Saved shell commands runnable from the Scripts tab against a dropped file's project. Placeholders: {dir} (file's folder), {file}, {name}, {root} (git root). Commands run in a login shell — you author them; they only run when you tap.")
+                        .font(.caption2)
+                        .foregroundColor(.secondary)) {
+                scriptsBody
             }
             }
 
@@ -406,6 +417,58 @@ struct SettingsView: View {
         guard !t.isEmpty else { return }
         promptStore.addCustom(t)
         newCustomPrompt = ""
+    }
+
+    // MARK: - Scripts section
+
+    @ViewBuilder private var scriptsBody: some View {
+        ForEach(scriptsStore.scripts) { script in
+            VStack(alignment: .leading, spacing: 5) {
+                HStack(spacing: 8) {
+                    TextField("Name", text: scriptBinding(script, \.name))
+                        .textFieldStyle(.roundedBorder)
+                    Button(role: .destructive) { scriptsStore.remove(script) } label: {
+                        Image(systemName: "trash")
+                    }
+                    .buttonStyle(.borderless)
+                    .help("Delete this script")
+                }
+                TextField("Command — e.g. npm run dev", text: scriptBinding(script, \.command))
+                    .textFieldStyle(.roundedBorder)
+                    .font(.system(.caption, design: .monospaced))
+                HStack(spacing: 12) {
+                    Picker("", selection: scriptBinding(script, \.inTerminal)) {
+                        Text("Terminal").tag(true)
+                        Text("In-app").tag(false)
+                    }
+                    .pickerStyle(.segmented)
+                    .labelsHidden()
+                    .frame(width: 150)
+                    Toggle("Run in git root", isOn: scriptBinding(script, \.useGitRoot))
+                        .toggleStyle(.checkbox)
+                    Spacer()
+                }
+            }
+            .padding(.vertical, 3)
+        }
+
+        Button { scriptsStore.addBlank() } label: {
+            Label("Add Script", systemImage: "plus")
+        }
+        .disabled(scriptsStore.scripts.count >= ScriptsStore.maxScripts)
+    }
+
+    /// Live binding to a field of `script` in the store (read current, write via `update`).
+    private func scriptBinding<V>(_ script: Script,
+                                  _ keyPath: WritableKeyPath<Script, V>) -> Binding<V> {
+        Binding(
+            get: { (scriptsStore.scripts.first { $0.id == script.id } ?? script)[keyPath: keyPath] },
+            set: {
+                var s = scriptsStore.scripts.first { $0.id == script.id } ?? script
+                s[keyPath: keyPath] = $0
+                scriptsStore.update(s)
+            }
+        )
     }
 
     /// Pick a .app bundle to add to a favorites list (`nil` = General).

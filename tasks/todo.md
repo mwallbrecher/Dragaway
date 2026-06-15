@@ -6,6 +6,21 @@
 
 ---
 
+## Feature — Scripts tab (5th chips tab) (IMPLEMENTED 2026-06-06 — build green; owner test pending)
+
+> Owner: a 5th "Scripts" tab where users save shell commands (npm run dev, git diff, …) and run
+> them against the dropped file's project — skip Terminal + cd + typing. Forks (answered):
+> run mode = per-script **Terminal vs in-app captured**; cwd = **dropped file's folder**, with a
+> per-script **"Run in git root"** toggle. Non-sandboxed → `Process`/AppleScript allowed.
+> SECURITY: user-authored only, explicit run, no destructive seeds.
+
+- [ ] `Models/ScriptsStore.swift` — `Script {id,name,command,inTerminal,useGitRoot}` + store.
+- [ ] `Core/ScriptRunner.swift` — cwd resolve + `{file}/{dir}/{name}/{root}` expand; Terminal (osascript)
+      or captured (`/bin/zsh -lc` + Pipe → NSAlert). git-root = walk up for `.git`.
+- [ ] `ChipsTab.scripts` + `ChipsLayout.rows`; OverlayView tab + content; Settings section; AppDelegate notif.
+
+---
+
 ## Feature — Output Directory (IMPLEMENTED 2026-06-05 — build green; owner test pending)
 
 > Resolved fork: **session + persist tiers** + an **×** in the utilities row that resets to "same
