@@ -124,6 +124,21 @@ class OverlayViewModel: ObservableObject {
     // Active tab in the stage-2 prompt section. Reset to .suggested on each fresh
     // drop so a new file always opens on its suggested actions.
     @Published var chipsTab: ChipsTab = .suggested
+
+    /// Advance the chips-stage tab selection — driven by the Tab / Shift+Tab keys.
+    /// Media files expose only Utilities + Scripts (no AI path), so cycling skips
+    /// the three AI tabs for them. Wraps around at either end.
+    func cycleChipsTab(reverse: Bool = false) {
+        let media = sessionFileURLs.first.map(FileInspector.isMediaFile) ?? false
+        let tabs: [ChipsTab] = media
+            ? [.utilities, .scripts]
+            : [.suggested, .history, .custom, .utilities, .scripts]
+        let idx = tabs.firstIndex(of: chipsTab) ?? 0
+        let next = reverse ? (idx - 1 + tabs.count) % tabs.count
+                           : (idx + 1) % tabs.count
+        withAnimation(.easeInOut(duration: 0.22)) { chipsTab = tabs[next] }
+    }
+
     @Published var isDragHovering = false
     // True when the current result was produced from content cut to fit the
     // extractor's char/page cap. Drives the "analysed the first part" hint.
@@ -206,6 +221,13 @@ class OverlayViewModel: ObservableObject {
         case folder(URL)
     }
     @Published var sessionOutputOverride: SessionOutput = .inherit
+
+    /// User's preferred order of the Utilities rows (by `FileTool.title`). Tools not listed
+    /// fall back to catalogue order, after the listed ones. Persisted across launches.
+    @Published var utilityOrder: [String] =
+        UserDefaults.standard.stringArray(forKey: "utility.order") ?? [] {
+        didSet { UserDefaults.standard.set(utilityOrder, forKey: "utility.order") }
+    }
 
     // ── Jelly wobble ─────────────────────────────────────────────────────────
     // Applied to the pill scaleEffect in OverlayView (outside clipShape so it

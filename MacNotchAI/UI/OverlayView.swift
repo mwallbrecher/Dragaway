@@ -1,5 +1,6 @@
 import SwiftUI
 import AppKit
+import UniformTypeIdentifiers
 
 // MARK: - Root overlay view
 
@@ -301,8 +302,11 @@ private struct WaitingPillView: View {
         // blue colour reads through the dark base rather than washing out.
         .liquidGlass(
             cornerRadius: 34 * scale,
-            tintOpacity: vm.isDragHovering ? 0.42 : 0.58,
-            colorTint: vm.isDragHovering ? Color.accentColor : .clear
+            tintOpacity: vm.isDragHovering ? 0.42 : 0.60,
+            colorTint: vm.isDragHovering ? Color.accentColor : .clear,
+            verticalFade: true,
+            material: .hudWindow,
+            emphasized: false
         )
         .animation(.easeInOut(duration: 0.18), value: vm.isDragHovering)
         // Jelly: call withAnimation directly in the VM — no Tasks, no sleep timers.
@@ -358,6 +362,11 @@ private struct ChipsColumnView: View {
     @State private var editingOutputPath = false
     @State private var outputPathDraft = ""
     @FocusState private var outputFieldFocused: Bool
+    // Drag-to-reorder (Scripts + Utilities rows): id of the row being dragged.
+    @State private var draggingRowID: String?
+    // Tab currently under the pointer — drives the single dynamic caption above
+    // the tab row. Falls back to the selected tab when nothing is hovered.
+    @State private var hoveredTab: OverlayViewModel.ChipsTab?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10 * scale) {
@@ -446,6 +455,67 @@ private struct ChipsColumnView: View {
         FileToolActions.utilityTools(for: fileURL, sessionFiles: vm.sessionFileURLs)
     }
 
+    /// `utilityTools` sorted by the user's saved order (unlisted tools keep catalogue order, last).
+    private var sortedUtilityTools: [FileTool] {
+        let order = vm.utilityOrder
+        return utilityTools.enumerated().sorted { a, b in
+            let ra = order.firstIndex(of: a.element.title) ?? (order.count + a.offset)
+            let rb = order.firstIndex(of: b.element.title) ?? (order.count + b.offset)
+            return ra < rb
+        }.map { $0.element }
+    }
+
+    // MARK: - Drag-to-reorder rows
+
+    /// A small grab handle on the right of a row that initiates a reorder drag.
+    private func reorderGrip(id: String) -> some View {
+        Image(systemName: "line.3.horizontal")
+            .font(.system(size: 11 * scale, weight: .semibold))
+            .foregroundColor(.white.opacity(0.28))
+            .frame(width: 24 * scale, height: 28 * scale)
+            .contentShape(Rectangle())
+            .onDrag {
+                draggingRowID = id
+                return NSItemProvider(object: id as NSString)
+            }
+            .help("Drag to reorder")
+    }
+
+    /// Wrap a row with a trailing reorder grip + a drop target. `onDrop` receives the dragged id.
+    @ViewBuilder
+    private func reorderableRow<Content: View>(id: String,
+                                               onDrop: @escaping (String) -> Void,
+                                               @ViewBuilder _ content: () -> Content) -> some View {
+        HStack(spacing: 4 * scale) {
+            content()
+            reorderGrip(id: id)
+        }
+        .onDrop(of: [.plainText], isTargeted: nil) { _ in
+            let dragged = draggingRowID
+            draggingRowID = nil
+            guard let dragged, dragged != id else { return false }
+            withAnimation(.spring(response: 0.30, dampingFraction: 0.82)) { onDrop(dragged) }
+            return true
+        }
+    }
+
+    private func reorderScript(dragged: String, ontoID: String) {
+        let s = scriptsStore.scripts
+        guard let from = s.firstIndex(where: { $0.id.uuidString == dragged }),
+              let to = s.firstIndex(where: { $0.id.uuidString == ontoID }), from != to else { return }
+        scriptsStore.move(from: IndexSet(integer: from), to: to > from ? to + 1 : to)
+    }
+
+    private func reorderUtility(dragged: String, ontoTitle: String) {
+        var titles = sortedUtilityTools.map(\.title)
+        guard let from = titles.firstIndex(of: dragged),
+              let to = titles.firstIndex(of: ontoTitle), from != to else { return }
+        titles.move(fromOffsets: IndexSet(integer: from), toOffset: to > from ? to + 1 : to)
+        // Keep order entries for other file types (not currently visible) after the visible ones.
+        let others = vm.utilityOrder.filter { !titles.contains($0) }
+        vm.utilityOrder = titles + others
+    }
+
     /// Logical (unclamped) row count of the active tab — must match the value
     /// AppDelegate.resizeOverlay uses so the window height fits the content region.
     private var currentRowCount: Int {
@@ -458,48 +528,70 @@ private struct ChipsColumnView: View {
     }
 
     private var chipsTabBar: some View {
-        // Two captioned groups side by side: the three AI prompt tabs under an
-        // "AI Insights" caption, and the file-utility tab under "Utilities". Each
-        // group is a VStack(caption, icons) so the tiny caption sits over its own
-        // tabs. Total height = ChipsLayout.tabBarHeight (caption + gap + icon row).
-        HStack(alignment: .bottom, spacing: 16 * scale) {
-            // Media (video/audio) has no AI path — show only the Utilities group.
-            if !isMediaSession {
-                tabGroup(caption: "AI Insights", captionIcon: "sparkles") {
-                    tabButton(.suggested, icon: "sparkles.2",       help: "Suggested")
-                    tabButton(.history,   icon: "list.bullet",      help: "History")
-                    tabButton(.custom,    icon: "slider.vertical.3", help: "Custom prompts")
-                }
-            }
-            tabGroup(caption: "Utilities", captionIcon: "wrench.and.screwdriver") {
-                tabButton(.utilities, icon: "wrench.and.screwdriver", help: "File utilities")
-            }
-            tabGroup(caption: "Scripts", captionIcon: "terminal") {
-                tabButton(.scripts, icon: "terminal", help: "Run a saved command")
-            }
-            Spacer(minLength: 0)
-        }
-        .frame(height: ChipsLayout.tabBarHeight * scale, alignment: .bottom)
-    }
-
-    /// One captioned tab group: a tiny icon + label caption above a flush row of
-    /// tab buttons. Spacing 0 between buttons — each carries its own hit-padding.
-    @ViewBuilder
-    private func tabGroup<Content: View>(
-        caption: String, captionIcon: String, @ViewBuilder _ tabs: () -> Content
-    ) -> some View {
-        VStack(alignment: .leading, spacing: ChipsLayout.tabCaptionGap * scale) {
+        // One flush row of tab icons under a SINGLE caption that reflects whichever
+        // tab is hovered (or selected when nothing is hovered): AI Suggestions /
+        // AI History / AI Customs / Utilities / Scripts.
+        // Total height = ChipsLayout.tabBarHeight (caption + gap + icon row).
+        let active = hoveredTab ?? vm.chipsTab
+        return VStack(alignment: .leading, spacing: ChipsLayout.tabCaptionGap * scale) {
             HStack(spacing: 3 * scale) {
-                Image(systemName: captionIcon)
+                Image(systemName: tabCaptionIcon(active))
                     .font(.system(size: 7 * scale, weight: .semibold))
-                Text(caption.uppercased())
+                Text(tabCaptionLabel(active).uppercased())
                     .font(.system(size: 8 * scale, weight: .semibold))
                     .tracking(0.5)
             }
             .foregroundColor(.white.opacity(0.32))
             .frame(height: ChipsLayout.tabCaptionHeight * scale)
+            .animation(.easeInOut(duration: 0.15), value: active)
 
-            HStack(spacing: 0) { tabs() }
+            HStack(spacing: 0) {
+                // Media (video/audio) has no AI path — show only Utilities + Scripts.
+                if !isMediaSession {
+                    // The three AI tabs sit tight inside a subtle grouping pill. The
+                    // active AI icon is full-size; the two inactive ones are smaller.
+                    HStack(spacing: 1 * scale) {
+                        aiTabButton(.suggested, icon: "sparkles.2",       help: "Suggested")
+                        aiTabButton(.history,   icon: "list.bullet",      help: "History")
+                        aiTabButton(.custom,    icon: "slider.vertical.3", help: "Custom prompts")
+                    }
+                    .padding(.horizontal, 2 * scale)
+                    .background(
+                        RoundedRectangle(cornerRadius: 9 * scale, style: .continuous)
+                            .fill(Color.white.opacity(0.045))
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 9 * scale, style: .continuous)
+                                    .strokeBorder(Color.white.opacity(0.06), lineWidth: 0.5)
+                            )
+                    )
+                    Spacer().frame(width: 12 * scale)   // visual gap before utilities
+                }
+                tabButton(.utilities, icon: "wrench.and.screwdriver", help: "File utilities")
+                tabButton(.scripts,   icon: "terminal",               help: "Run a saved command")
+                Spacer(minLength: 0)
+            }
+        }
+        .frame(height: ChipsLayout.tabBarHeight * scale, alignment: .bottom)
+    }
+
+    /// Caption shown above the tab row for the hovered/selected tab.
+    private func tabCaptionLabel(_ tab: OverlayViewModel.ChipsTab) -> String {
+        switch tab {
+        case .suggested: return "AI Suggestions"
+        case .history:   return "AI History"
+        case .custom:    return "AI Customs"
+        case .utilities: return "Utilities"
+        case .scripts:   return "Scripts"
+        }
+    }
+
+    private func tabCaptionIcon(_ tab: OverlayViewModel.ChipsTab) -> String {
+        switch tab {
+        case .suggested: return "sparkles"
+        case .history:   return "list.bullet"
+        case .custom:    return "slider.vertical.3"
+        case .utilities: return "wrench.and.screwdriver"
+        case .scripts:   return "terminal"
         }
     }
 
@@ -530,9 +622,51 @@ private struct ChipsColumnView: View {
                 .frame(width: 44 * scale, height: ChipsLayout.tabIconRowHeight * scale,
                        alignment: .leading)
                 .contentShape(Rectangle())
+                .animation(.easeInOut(duration: 0.22), value: selected)
         }
         .buttonStyle(.plain)
         .help(help)
+        .onHover { inside in
+            if inside { hoveredTab = tab }
+            else if hoveredTab == tab { hoveredTab = nil }
+        }
+    }
+
+    /// AI-group tab button. Tighter footprint than `tabButton`, and the icon shrinks
+    /// when the tab is inactive so the active AI tab visually leads its two siblings.
+    /// Switching tabs cross-fades the size/opacity cleanly via `withAnimation`.
+    @ViewBuilder
+    private func aiTabButton(_ tab: OverlayViewModel.ChipsTab, icon: String, help: String) -> some View {
+        let selected = vm.chipsTab == tab
+        Button {
+            guard vm.chipsTab != tab else { return }
+            isAddingCustom = false          // close any open composer when switching
+            withAnimation(.easeInOut(duration: 0.22)) { vm.chipsTab = tab }
+        } label: {
+            Image(systemName: icon)
+                .font(.system(size: (selected ? 11.5 : 9.5) * scale, weight: .semibold))
+                .foregroundColor(selected ? .white : .white.opacity(0.38))
+                .frame(width: (selected ? 28 : 24) * scale, height: 24 * scale)
+                .background(
+                    RoundedRectangle(cornerRadius: 7 * scale, style: .continuous)
+                        .fill(Color.white.opacity(selected ? 0.14 : 0.0))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 7 * scale, style: .continuous)
+                                .strokeBorder(Color.white.opacity(selected ? 0.18 : 0.0), lineWidth: 0.5)
+                        )
+                )
+                // Centered (not leading) so the three icons sit evenly inside the
+                // grouping pill. Tappable area fills the icon-row height.
+                .frame(height: ChipsLayout.tabIconRowHeight * scale)
+                .contentShape(Rectangle())
+                .animation(.easeInOut(duration: 0.22), value: selected)
+        }
+        .buttonStyle(.plain)
+        .help(help)
+        .onHover { inside in
+            if inside { hoveredTab = tab }
+            else if hoveredTab == tab { hoveredTab = nil }
+        }
     }
 
     private var chipsTabContent: some View {
@@ -569,21 +703,24 @@ private struct ChipsColumnView: View {
                     // Pillar 2: file-utility actions as chips (convert/rename/move/…),
                     // type-gated to the dropped file. Tapping runs the FileTools engine
                     // and confirms the macOS-native way (Finder reveal / NSAlert).
-                    ForEach(utilityTools) { tool in
-                        MenuActionRow(title: tool.title, systemImage: tool.systemImage,
-                                      isLoading: runningTool == tool) {
-                            // One media op at a time; sync utilities are instant.
-                            guard runningTool == nil else { return }
-                            if tool.isAsync {
-                                runningTool = tool
-                                Task {
-                                    await FileToolActions.performAsync(
-                                        tool, fileURL: fileURL, sessionFiles: vm.sessionFileURLs)
-                                    runningTool = nil
+                    ForEach(sortedUtilityTools) { tool in
+                        reorderableRow(id: tool.title,
+                                       onDrop: { reorderUtility(dragged: $0, ontoTitle: tool.title) }) {
+                            MenuActionRow(title: tool.title, systemImage: tool.systemImage,
+                                          isLoading: runningTool == tool) {
+                                // One media op at a time; sync utilities are instant.
+                                guard runningTool == nil else { return }
+                                if tool.isAsync {
+                                    runningTool = tool
+                                    Task {
+                                        await FileToolActions.performAsync(
+                                            tool, fileURL: fileURL, sessionFiles: vm.sessionFileURLs)
+                                        runningTool = nil
+                                    }
+                                } else {
+                                    FileToolActions.perform(tool, fileURL: fileURL,
+                                                            sessionFiles: vm.sessionFileURLs)
                                 }
-                            } else {
-                                FileToolActions.perform(tool, fileURL: fileURL,
-                                                        sessionFiles: vm.sessionFileURLs)
                             }
                         }
                     }
@@ -593,9 +730,12 @@ private struct ChipsColumnView: View {
                         emptyHint("No scripts yet — add one in Settings.")
                     } else {
                         ForEach(scriptsStore.scripts) { script in
-                            MenuActionRow(title: script.name,
-                                          systemImage: script.inTerminal ? "terminal" : "play.circle") {
-                                ScriptRunner.run(script, fileURL: fileURL)
+                            reorderableRow(id: script.id.uuidString,
+                                           onDrop: { reorderScript(dragged: $0, ontoID: script.id.uuidString) }) {
+                                MenuActionRow(title: script.name,
+                                              systemImage: script.inTerminal ? "terminal" : "play.circle") {
+                                    ScriptRunner.run(script, fileURL: fileURL)
+                                }
                             }
                         }
                     }

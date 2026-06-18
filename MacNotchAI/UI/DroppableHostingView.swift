@@ -102,6 +102,7 @@ final class DroppableHostingView: NSHostingView<OverlayView> {
             withAnimation(.spring(response: 0.36, dampingFraction: 1.0)) {
                 vm.pendingDroppedURLs = supported
             }
+            grabFocusAfterDrop()
             return true
         }
 
@@ -112,12 +113,32 @@ final class DroppableHostingView: NSHostingView<OverlayView> {
                 url: first,
                 message: "\"\(first.lastPathComponent)\" can't be analysed.\nAI Drop supports PDF, text, images, and code files."
             )
+            grabFocusAfterDrop()
             return true
         }
         withAnimation(.spring(response: 0.34, dampingFraction: 1.0)) {
             vm.setChips(urls: supported)
         }
+        grabFocusAfterDrop()
         return true
+    }
+
+    /// Pull the app + overlay window into focus right after a completed drop, so the
+    /// user can immediately type a prompt or use Tab without clicking first.
+    ///
+    /// The pill window is shown with a plain `orderFront` during the drag (it's a
+    /// `.nonactivatingPanel`, so it deliberately does NOT steal focus mid-drag and
+    /// cancel the Finder drag session). Once the drop lands the mouse is already
+    /// released — there's no live drag to disturb — so it's safe to activate.
+    ///
+    /// Deferred one run-loop tick to stay clear of the drop's in-flight SwiftUI
+    /// layout pass (this codebase aborts if a second AppKit layout re-enters the
+    /// constraint solver mid-transition).
+    private func grabFocusAfterDrop() {
+        DispatchQueue.main.async { [weak self] in
+            NSApp.activate(ignoringOtherApps: true)
+            self?.window?.makeKey()
+        }
     }
 
     // MARK: - Pill hit-test helper

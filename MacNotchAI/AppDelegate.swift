@@ -935,6 +935,18 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     /// prompt field); otherwise returns the event unchanged for normal handling.
     @MainActor
     private static func handleToolHotkey(_ event: NSEvent) -> NSEvent? {
+        // Tab / Shift+Tab cycles the first-stage (chips) tabs. Only while the chips
+        // stage is up and the user is NOT editing a text field (then Tab belongs to
+        // the field editor for normal text/focus traversal). keyCode 48 = Tab.
+        if event.keyCode == 48, OverlayViewModel.shared.stage.tag == 1 {
+            let chord = event.modifierFlags.intersection([.command, .option, .control, .shift])
+            let editing = NSApp.keyWindow?.firstResponder is NSText
+            if !editing, chord.isSubset(of: .shift) {       // bare Tab or Shift+Tab only
+                OverlayViewModel.shared.cycleChipsTab(reverse: chord.contains(.shift))
+                return nil                                  // swallow — don't move focus
+            }
+        }
+
         // Bare Option only — ignore Option+Cmd / Option+Ctrl / Option+Shift chords.
         let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
         let urls = OverlayViewModel.shared.sessionFileURLs
