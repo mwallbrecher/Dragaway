@@ -68,6 +68,15 @@ struct FileInspector {
     /// cost to a single read.
     static func suggestedActions(forAll urls: [URL]) -> [AIAction] {
         guard let primary = urls.first else { return [] }
+        let union = baseActions(forAll: urls)
+        guard !union.isEmpty else { return union }
+        return reorder(union, using: cachedPeek(primary), isProse: isProseFile(primary))
+    }
+
+    /// The instant (no-peek) union of base actions across `urls`, preserving first-URL
+    /// order. Used to show the chips card immediately; the content-aware reorder is
+    /// applied afterwards via `peekSignals` + `smartReorder` off the main thread.
+    static func baseActions(forAll urls: [URL]) -> [AIAction] {
         var seen = Set<AIAction>()
         var union: [AIAction] = []
         for url in urls {
@@ -75,8 +84,21 @@ struct FileInspector {
                 union.append(action)
             }
         }
-        guard !union.isEmpty else { return union }
-        return reorder(union, using: cachedPeek(primary), isProse: isProseFile(primary))
+        return union
+    }
+
+    /// Off-main-safe content peek (no cache touch — the cache is main-actor only).
+    /// Pair with `smartReorder` back on the main actor.
+    nonisolated static func peekSignals(_ url: URL) -> FileSignals.Signals {
+        FileSignals.peek(url)
+    }
+
+    /// Reorder a precomputed base list using already-peeked signals (cheap, no IO).
+    static func smartReorder(_ base: [AIAction],
+                             primary: URL,
+                             signals: FileSignals.Signals) -> [AIAction] {
+        guard !base.isEmpty else { return base }
+        return reorder(base, using: signals, isProse: isProseFile(primary))
     }
 
     // MARK: - Heuristic reorder

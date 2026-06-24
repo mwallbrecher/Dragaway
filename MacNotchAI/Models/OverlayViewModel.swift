@@ -294,8 +294,11 @@ class OverlayViewModel: ObservableObject {
         isAwaitingReply = false
         // Fresh drop = a new history session (record persisted on the first turn).
         SessionHistoryStore.shared.beginSession(primary: url)
-        stage = .chips(url: url, actions: FileInspector.suggestedActions(for: url))
+        // Instant base actions, then async content-aware reorder (see applySmartActions).
+        let base = FileInspector.baseActions(for: url)
+        stage = .chips(url: url, actions: base)
         customPrompt = ""
+        applySmartActions(base: base, primary: url)
     }
 
     /// Open Stage 2 for a batch of dropped files in ONE session: the first supported
@@ -329,9 +332,32 @@ class OverlayViewModel: ObservableObject {
         // Set additionals BEFORE the stage so chip actions reflect the whole batch.
         additionalFileURLs = extras
         SessionHistoryStore.shared.beginSession(primary: primary)
-        stage = .chips(url: primary,
-                       actions: FileInspector.suggestedActions(forAll: [primary] + extras))
+        // Show the card INSTANTLY with the no-peek base actions, then upgrade to the
+        // content-aware order once the (file-IO) peek finishes off the main thread.
+        // The bounded peek (esp. PDF text extraction) was costing the visible "few ms"
+        // before the session appeared.
+        let allURLs = [primary] + extras
+        let base = FileInspector.baseActions(forAll: allURLs)
+        stage = .chips(url: primary, actions: base)
         customPrompt = ""
+        applySmartActions(base: base, primary: primary)
+    }
+
+    /// Off-main content peek → main-thread reorder → patch the live chips actions if the
+    /// order actually changed and the session is still on the same primary file.
+    private func applySmartActions(base: [AIAction], primary: URL) {
+        guard !base.isEmpty, !FileInspector.isMediaFile(primary) else { return }
+        Task.detached(priority: .userInitiated) {
+            let signals = FileInspector.peekSignals(primary)
+            await MainActor.run {
+                guard case .chips(let u, let current) = OverlayViewModel.shared.stage,
+                      u == primary else { return }
+                let reordered = FileInspector.smartReorder(base, primary: primary, signals: signals)
+                if reordered != current {
+                    OverlayViewModel.shared.stage = .chips(url: primary, actions: reordered)
+                }
+            }
+        }
     }
 
     /// Restart (↻) scope: "clear chat, keep file". Wipes the transcript and cached

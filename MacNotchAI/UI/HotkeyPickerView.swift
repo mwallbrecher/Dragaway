@@ -8,8 +8,24 @@ struct HotkeyPickerView: View {
 
     @State private var selectedMods:  NSEvent.ModifierFlags = HotkeyManager.shared.requiredModifiers
     @State private var requiresSpace: Bool                  = HotkeyManager.shared.requiresSpacebar
+    @State private var radialMods:    NSEvent.ModifierFlags = HotkeyManager.shared.radialModifiers
+    @State private var pillEnabled:   Bool = HotkeyManager.shared.pillEnabled
+    @State private var radialEnabled: Bool = HotkeyManager.shared.radialEnabled
+    @State private var showAIDrop:    Bool = HotkeyManager.shared.radialShowsAIDrop
 
-    private var nothingSelected: Bool { selectedMods.isEmpty && !requiresSpace }
+    private var pillNone:   Bool { selectedMods.isEmpty && !requiresSpace }
+    private var radialNone: Bool { radialMods.isEmpty }
+
+    private var pillPreview: String {
+        if !pillEnabled { return "Pill: off." }
+        return pillNone ? "Pill: appears by default (no key)."
+                        : "Pill: hold \(HotkeyManager.displayString(for: selectedMods, space: requiresSpace))."
+    }
+    private var radialPreview: String {
+        if !radialEnabled { return "Wheel: off." }
+        return radialNone ? "Wheel: appears by default (no key)."
+                          : "Wheel: hold \(HotkeyManager.displayString(for: radialMods))."
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -20,10 +36,10 @@ struct HotkeyPickerView: View {
                     .font(.system(size: 34, weight: .light))
                     .foregroundColor(.accentColor)
 
-                Text("Drag Hotkey")
+                Text("Drag Hotkeys")
                     .font(.title2.bold())
 
-                Text("When set, the pill only appears while you hold\nthe selected key(s) at the start of a drag.")
+                Text("Turn each drag mode on or off, and give it an optional key to\nhold at the start of a drag. No key = the mode appears by default;\nwith both on and keyless, the pill and the wheel both appear.")
                     .font(.subheadline)
                     .foregroundColor(.secondary)
                     .multilineTextAlignment(.center)
@@ -34,66 +50,93 @@ struct HotkeyPickerView: View {
             .padding(.horizontal, 28)
 
             Divider()
-                .padding(.vertical, 20)
+                .padding(.vertical, 18)
 
-            // ── Key selection ────────────────────────────────────────────────────
-            VStack(alignment: .leading, spacing: 14) {
-
-                Text("Required key(s) during drag")
-                    .font(.headline)
-
-                // ── Modifier row ────────────────────────────────────────────────
-                HStack(spacing: 8) {
-                    ModifierToggle(symbol: "⌃", label: "Control",
-                                   flag: .control, selection: $selectedMods)
-                    ModifierToggle(symbol: "⌥", label: "Option",
-                                   flag: .option,  selection: $selectedMods)
-                    ModifierToggle(symbol: "⇧", label: "Shift",
-                                   flag: .shift,   selection: $selectedMods)
-                    ModifierToggle(symbol: "⌘", label: "Command",
-                                   flag: .command, selection: $selectedMods)
+            // ── Section 1: notch pill ────────────────────────────────────────────
+            VStack(alignment: .leading, spacing: 12) {
+                HStack {
+                    Text("Notch pill (AI & utilities)").font(.headline)
+                    Spacer()
+                    Toggle("", isOn: $pillEnabled).labelsHidden()
                 }
-
-                // ── Spacebar row ─────────────────────────────────────────────────
-                SpacebarToggle(isOn: $requiresSpace)
-
-                Divider()
-
-                // ── Preview ──────────────────────────────────────────────────────
-                Group {
-                    if nothingSelected {
-                        Label(
-                            "No key set — pill appears for every drag.",
-                            systemImage: "info.circle"
-                        )
-                        .foregroundColor(.secondary)
-                    } else {
-                        Label(
-                            "Hold \(HotkeyManager.displayString(for: selectedMods, space: requiresSpace)) while dragging a file to show the pill.",
-                            systemImage: "checkmark.circle.fill"
-                        )
-                        .foregroundColor(.accentColor)
+                VStack(alignment: .leading, spacing: 12) {
+                    HStack(spacing: 8) {
+                        ModifierToggle(symbol: "⌃", label: "Control",
+                                       flag: .control, selection: $selectedMods)
+                        ModifierToggle(symbol: "⌥", label: "Option",
+                                       flag: .option,  selection: $selectedMods)
+                        ModifierToggle(symbol: "⇧", label: "Shift",
+                                       flag: .shift,   selection: $selectedMods)
+                        ModifierToggle(symbol: "⌘", label: "Command",
+                                       flag: .command, selection: $selectedMods)
                     }
+                    SpacebarToggle(isOn: $requiresSpace)
                 }
-                .font(.callout)
-                .animation(.easeInOut(duration: 0.15), value: nothingSelected)
+                .disabled(!pillEnabled)
+                .opacity(pillEnabled ? 1 : 0.4)
             }
             .padding(.horizontal, 28)
 
-            Spacer(minLength: 24)
+            Divider()
+                .padding(.vertical, 16)
+
+            // ── Section 2: radial launcher ───────────────────────────────────────
+            VStack(alignment: .leading, spacing: 12) {
+                HStack {
+                    Text("Radial launcher (open in a favorite app)").font(.headline)
+                    Spacer()
+                    Toggle("", isOn: $radialEnabled).labelsHidden()
+                }
+                VStack(alignment: .leading, spacing: 12) {
+                    HStack(spacing: 8) {
+                        ModifierToggle(symbol: "⌃", label: "Control",
+                                       flag: .control, selection: $radialMods)
+                        ModifierToggle(symbol: "⌥", label: "Option",
+                                       flag: .option,  selection: $radialMods)
+                        ModifierToggle(symbol: "⇧", label: "Shift",
+                                       flag: .shift,   selection: $radialMods)
+                        ModifierToggle(symbol: "⌘", label: "Command",
+                                       flag: .command, selection: $radialMods)
+                    }
+                    Toggle("Show AI Drop in Launcher", isOn: $showAIDrop)
+                }
+                .disabled(!radialEnabled)
+                .opacity(radialEnabled ? 1 : 0.4)
+            }
+            .padding(.horizontal, 28)
+
+            // ── Combined preview ─────────────────────────────────────────────────
+            VStack(alignment: .leading, spacing: 4) {
+                Label(pillPreview, systemImage: "rectangle.portrait.topthird.inset.filled")
+                    .foregroundColor(pillEnabled ? .accentColor : .secondary)
+                Label(radialPreview, systemImage: "circle.dashed")
+                    .foregroundColor(radialEnabled ? .accentColor : .secondary)
+            }
+            .font(.callout)
+            .padding(.horizontal, 28)
+            .padding(.top, 16)
+            .animation(.easeInOut(duration: 0.15), value: pillEnabled)
+            .animation(.easeInOut(duration: 0.15), value: radialEnabled)
+
+            Spacer(minLength: 22)
 
             // ── Action buttons ───────────────────────────────────────────────────
             HStack(spacing: 10) {
-                Button("Clear") {
-                    HotkeyManager.shared.clear()
-                    onDismiss()
+                Button("Clear Keys") {
+                    selectedMods  = []
+                    requiresSpace = false
+                    radialMods    = []
                 }
                 .buttonStyle(.bordered)
                 .controlSize(.large)
 
                 Button("Save") {
+                    HotkeyManager.shared.pillEnabled       = pillEnabled
+                    HotkeyManager.shared.radialEnabled     = radialEnabled
                     HotkeyManager.shared.requiredModifiers = selectedMods
                     HotkeyManager.shared.requiresSpacebar  = requiresSpace
+                    HotkeyManager.shared.radialModifiers   = radialMods
+                    HotkeyManager.shared.radialShowsAIDrop = showAIDrop
                     onDismiss()
                 }
                 .buttonStyle(.borderedProminent)

@@ -10,6 +10,17 @@ AI Drop is a native macOS menu-bar app that turns your physical notch into an AI
 
 ---
 
+## What's New in v1.1
+
+- **Radial launcher — a second drag mode** — hold a key as you start dragging a file and a **wheel of your favorite apps** fans out around the cursor. Flick toward a wedge and release to open the file in that app — no drop target to aim for, no menu to click. The apps come from your **Favorite Tools**, category-aware for the file you're dragging.
+- **"Start Session" slot** — the wheel can include AI Drop itself: a larger **Start Session** slot at the top-centre routes the file straight into the AI card instead of an external app. Toggle it with **Show AI Drop in Launcher**.
+- **Two independent drag modes, one place to set them** — the **Drag Hotkeys** window now configures the **notch pill** (AI & utilities) and the **radial launcher** separately. Give each its own modifier, switch either off entirely, or leave a mode keyless to make it the default — leave **both** keyless and a single drag shows the pill *and* the wheel together.
+- **Pill ↔ wheel handoff** — when both appear, dragging up toward the notch hands the file to the pill (start an AI session) while flicking out to a wedge opens an app. The launcher only releases its selection as you approach the pill, so an outward flick still launches reliably.
+- **Real file icons** — a dropped file now shows its **actual Quick Look thumbnail** (the image itself, a PDF's first page, a video poster frame) instead of a generic type icon.
+- **Faster & snappier** — the action card appears **instantly** on drop (the content peek that tunes suggested prompts now runs in the background), **Tab / Shift+Tab** cycle the prompt tabs, the close / minimize buttons have larger hit targets, and the drop pill is a clean flat-black surface that looks identical in light and dark mode.
+
+---
+
 ## What's New in v0.9.9
 
 - **Favorite apps — "Open in" row** — Pick your go-to apps in **Settings → Favorite Tools**, then open any dropped file in them with a single click — or press **⌥1 … ⌥9**. The numbered row appears on both the action card and the result card.

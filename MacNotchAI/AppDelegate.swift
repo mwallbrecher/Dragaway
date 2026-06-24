@@ -101,6 +101,12 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         )
         registerShareInboxObserver()
 
+        // Radial launcher "AI Drop" slot / pill-approach handoff → open the chips card.
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(handleRadialOpenSession(_:)),
+            name: .radialOpenSession, object: nil
+        )
+
         // Space switches cancel any active system drag and leave DragMonitor in a
         // stale state — pressTimeChangeCount and lastDragChangeCount diverge, making
         // the next drag on the new space fail the pasteboard guard silently.
@@ -1185,6 +1191,13 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         startDismissMonitors()
     }
 
+    /// Radial launcher "AI Drop" slot / pill-approach handoff → open the chips card for
+    /// the dragged file(s). Reuses the same proven path as the Finder Quick Action.
+    @objc private func handleRadialOpenSession(_ note: Notification) {
+        guard let urls = note.object as? [URL], !urls.isEmpty else { return }
+        Task { @MainActor in self.openSessionWithFiles(urls) }
+    }
+
     func hideOverlay() {
         guard overlayWindow != nil else { return }   // already hidden — no double-dismiss
         stopDismissMonitors()
@@ -1453,7 +1466,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 self.hotkeyPickerWindow = nil
             })
             let win = NSWindow(contentViewController: hosting)
-            win.title = "Drag Hotkey"
+            win.title = "Drag Hotkeys"
             win.styleMask = [.titled, .closable]
             win.isReleasedWhenClosed = false
             win.center()
@@ -1541,6 +1554,7 @@ extension Notification.Name {
     static let showOutputDirectory = Notification.Name("com.aidrop.showOutputDirectory")
     static let showScripts          = Notification.Name("com.aidrop.showScripts")
     static let addFilesFromShare = Notification.Name("com.aidrop.addFilesFromShare")
+    static let radialOpenSession = Notification.Name("com.aidrop.radialOpenSession")
 }
 
 // MARK: - Provider resolution

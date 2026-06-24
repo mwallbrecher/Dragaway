@@ -129,12 +129,43 @@ class DragMonitor: ObservableObject {
         lastDragChangeCount = count
 
         let hasDrag = hasFile(on: pb)
-        // Optional hotkey gate: when the user has configured a modifier/spacebar
-        // combo, the pill only appears if that combo is held as the drag starts.
-        // With nothing configured isHotkeyHeld() is always true (normal behaviour).
-        if hasDrag, !isDraggingFile, HotkeyManager.shared.isHotkeyHeld() {
-            isDraggingFile = true
-            startPolling()
+        if hasDrag, !isDraggingFile, !RadialLauncherController.shared.isActive {
+            let hk = HotkeyManager.shared
+
+            // Each drag mode (notch pill, radial launcher) has an OPTIONAL trigger
+            // key. If any configured trigger is held at drag start, show exactly the
+            // matching mode(s); otherwise show every mode whose trigger is "None"
+            // (the defaults). Both set to None ⇒ both appear on a plain drag.
+            // Master switches first — a disabled mode never shows, whatever its key.
+            let pillOn   = hk.pillEnabled
+            let radialOn = hk.radialEnabled
+            let pillHasKey   = pillOn   && hk.isEnabled
+            let radialHasKey = radialOn && !hk.radialModifiers.isEmpty
+            let pillHeld     = pillOn   && hk.pillHotkeyHeld()
+            let radialHeld   = radialOn && hk.radialModifiersHeld()
+
+            var showPill   = false
+            var showRadial = false
+            if pillHeld || radialHeld {
+                showPill   = pillHeld
+                showRadial = radialHeld
+            } else {
+                showPill   = pillOn   && !pillHasKey    // enabled + no key → default mode
+                showRadial = radialOn && !radialHasKey  // enabled + no key → default mode
+            }
+
+            // Radial is always full-screen so it keeps tracking far flicks. When it
+            // shares the drag with the pill (coexist) it carves out a pill-approach
+            // zone near the notch and hands the drop off to the pill there.
+            if showRadial {
+                let ok = RadialLauncherController.shared.begin(
+                    urls: fileURLs(on: pb), coexistWithPill: showPill)
+                if !ok { showPill = true }                      // no favorites → fall back to pill
+            }
+            if showPill {
+                isDraggingFile = true
+                startPolling()
+            }
         } else if !hasDrag {
             isDraggingFile = false
             stopPolling()
@@ -176,6 +207,21 @@ class DragMonitor: ObservableObject {
     }
 
     // MARK: - Private – pasteboard inspection
+
+    /// File URLs currently on the drag pasteboard (used to seed the radial launcher).
+    private func fileURLs(on pasteboard: NSPasteboard) -> [URL] {
+        if let urls = pasteboard.readObjects(
+            forClasses: [NSURL.self],
+            options: [.urlReadingFileURLsOnly: true]
+        ) as? [URL], !urls.isEmpty { return urls }
+
+        if let paths = pasteboard.propertyList(
+            forType: NSPasteboard.PasteboardType("NSFilenamesPboardType")
+        ) as? [String], !paths.isEmpty {
+            return paths.map { URL(fileURLWithPath: $0) }
+        }
+        return []
+    }
 
     private func hasFile(on pasteboard: NSPasteboard) -> Bool {
         if let urls = pasteboard.readObjects(

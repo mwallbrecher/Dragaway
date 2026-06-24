@@ -293,21 +293,25 @@ private struct WaitingPillView: View {
         .padding(.vertical, 18 * scale)
         // Height = 68 × scale so cornerRadius = 34 × scale → perfect stadium shape.
         .frame(width: 240 * scale, height: 68 * scale)
-        // Background + clip live HERE (inside WaitingPillView), not on the outer
-        // canvas in OverlayView. The outer 288×96 canvas stays transparent so the
-        // wobble scaleEffect (applied after this clip in OverlayView) can overflow
-        // freely without hitting the window clip boundary.
+        // Plain, slightly-transparent black surface — matches the radial launcher's
+        // flat look rather than the frosted glass the later stages use. Background +
+        // clip live HERE (inside WaitingPillView), not on the outer canvas in
+        // OverlayView, so the outer 288×96 canvas stays transparent and the wobble
+        // scaleEffect (applied after this in OverlayView) can overflow freely.
         //
-        // Hover: apple system-blue tint fades in; tintOpacity drops slightly so the
-        // blue colour reads through the dark base rather than washing out.
-        .liquidGlass(
-            cornerRadius: 34 * scale,
-            tintOpacity: vm.isDragHovering ? 0.42 : 0.60,
-            colorTint: vm.isDragHovering ? Color.accentColor : .clear,
-            verticalFade: true,
-            material: .hudWindow,
-            emphasized: false
+        // Hover: the surface darkens a touch and the rim picks up the system accent.
+        .background(
+            RoundedRectangle(cornerRadius: 34 * scale, style: .continuous)
+                .fill(Color.black.opacity(vm.isDragHovering ? 0.64 : 0.55))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 34 * scale, style: .continuous)
+                        .strokeBorder(vm.isDragHovering
+                                      ? Color.accentColor.opacity(0.65)
+                                      : Color.white.opacity(0.14),
+                                      lineWidth: 1)
+                )
         )
+        .clipShape(RoundedRectangle(cornerRadius: 34 * scale, style: .continuous))
         .animation(.easeInOut(duration: 0.18), value: vm.isDragHovering)
         // Jelly: call withAnimation directly in the VM — no Tasks, no sleep timers.
         // initial: false so it doesn't fire on view creation and call stopJellyHover()
@@ -1492,6 +1496,7 @@ private struct ExpandedFilePill: View {
                 Image(nsImage: fileIcon)
                     .resizable()
                     .interpolation(.high)
+                    .scaledToFit()                       // keep thumbnail aspect (no stretch)
                     .frame(width: 30 * scale, height: 30 * scale)
 
                 VStack(alignment: .leading, spacing: 2 * scale) {
@@ -1563,7 +1568,7 @@ private struct ExpandedFilePill: View {
         }
         .help(url.lastPathComponent)
         .onAppear {
-            Task { @MainActor in fileIcon = NSWorkspace.shared.icon(forFile: url.path) }
+            FileThumbnail.load(for: url, size: 30) { fileIcon = $0 }
         }
     }
 
@@ -1928,6 +1933,7 @@ private struct SingleFilePill: View {
                 Image(nsImage: fileIcon)
                     .resizable()
                     .interpolation(.high)
+                    .scaledToFit()                       // keep thumbnail aspect (no stretch)
                     .frame(width: 24 * scale, height: 24 * scale)
 
                 VStack(alignment: .leading, spacing: 1 * scale) {
@@ -1998,9 +2004,7 @@ private struct SingleFilePill: View {
             }
         }
         .onAppear {
-            Task { @MainActor in
-                fileIcon = NSWorkspace.shared.icon(forFile: fileURL.path)
-            }
+            FileThumbnail.load(for: fileURL, size: 24) { fileIcon = $0 }
         }
     }
 }
@@ -2024,6 +2028,7 @@ private struct FilePill: View {
         Image(nsImage: fileIcon)
             .resizable()
             .interpolation(.high)
+            .scaledToFit()                       // keep thumbnail aspect (no stretch)
             .frame(width: 24 * scale, height: 24 * scale)
             .padding(.horizontal, 8 * scale)
             .padding(.vertical, 7 * scale)
@@ -2233,6 +2238,12 @@ private struct CloseButton: View {
                     tintOpacity: isHovered ? 0.30 : 0.45,
                     colorTint: Color(red: 1.0, green: 0.22, blue: 0.20)
                 )
+                // Enlarge the hit target beyond the visible 22pt circle: liquidGlassCircle
+                // clips hit-testing to the circle, so near-edge clicks (and the frame
+                // corners) were dead — making the button feel small / flaky. The 32pt
+                // transparent rectangle keeps the visible circle the same but catches them.
+                .frame(width: 32 * scale, height: 32 * scale)
+                .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .onHover { isHovered = $0 }
@@ -2267,6 +2278,10 @@ private struct MinimizeButton: View {
                             lineWidth: 0.5
                         ))
                 )
+                // Larger hit target than the visible 22pt circle (see CloseButton) so
+                // edge clicks register and it stays aligned with the close button.
+                .frame(width: 32 * scale, height: 32 * scale)
+                .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .onHover { isHovered = $0 }

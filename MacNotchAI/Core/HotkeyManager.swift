@@ -13,6 +13,10 @@ final class HotkeyManager {
 
     private let modifiersKey  = "hotkeyModifierFlags"
     private let spacebarKey   = "hotkeyRequiresSpacebar"
+    private let radialModifiersKey  = "radialLauncherModifierFlags"
+    private let pillEnabledKey       = "pillModeEnabled"
+    private let radialEnabledKey     = "radialModeEnabled"
+    private let radialShowsAIDropKey = "radialShowsAIDrop"
 
     // MARK: - Storage
 
@@ -35,6 +39,54 @@ final class HotkeyManager {
 
     /// True when at least one key constraint is configured.
     var isEnabled: Bool { !requiredModifiers.isEmpty || requiresSpacebar }
+
+    // MARK: - Mode master switches
+
+    /// Whether the notch pill mode is active at all. Off = the pill never appears.
+    var pillEnabled: Bool {
+        get { UserDefaults.standard.object(forKey: pillEnabledKey) as? Bool ?? true }
+        set { UserDefaults.standard.set(newValue, forKey: pillEnabledKey) }
+    }
+
+    /// Whether the radial launcher mode is active at all. Off = the wheel never appears.
+    var radialEnabled: Bool {
+        get { UserDefaults.standard.object(forKey: radialEnabledKey) as? Bool ?? true }
+        set { UserDefaults.standard.set(newValue, forKey: radialEnabledKey) }
+    }
+
+    /// Whether the radial wheel includes an "AI Drop" slot that routes the file into
+    /// the pill/chips flow instead of an external app.
+    var radialShowsAIDrop: Bool {
+        get { UserDefaults.standard.object(forKey: radialShowsAIDropKey) as? Bool ?? true }
+        set { UserDefaults.standard.set(newValue, forKey: radialShowsAIDropKey) }
+    }
+
+    // MARK: - Radial launcher (second drag mode)
+
+    /// Modifier(s) that arm the radial launcher. Defaults to ⌃ Control. Empty set =
+    /// "no key" → the radial launcher becomes a default mode (see the drag router).
+    var radialModifiers: NSEvent.ModifierFlags {
+        get {
+            guard let raw = UserDefaults.standard.object(forKey: radialModifiersKey) as? Int else {
+                return .control
+            }
+            return NSEvent.ModifierFlags(rawValue: UInt(bitPattern: raw))
+        }
+        set { UserDefaults.standard.set(Int(bitPattern: newValue.rawValue), forKey: radialModifiersKey) }
+    }
+
+    var radialDisplayString: String { Self.displayString(for: radialModifiers) }
+
+    /// True when the radial launcher's modifier(s) are non-empty and held right now.
+    /// (Empty = "no key", which is handled as a default mode by the drag router.)
+    func radialModifiersHeld() -> Bool {
+        guard !radialModifiers.isEmpty else { return false }
+        let live = NSEvent.modifierFlags.intersection(.deviceIndependentFlagsMask)
+        return live.contains(radialModifiers)
+    }
+
+    /// True when the pill gate's modifier(s)/spacebar are configured and held right now.
+    func pillHotkeyHeld() -> Bool { isEnabled && isHotkeyHeld() }
 
     // MARK: - Display
 
