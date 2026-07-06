@@ -5,18 +5,20 @@ import UniformTypeIdentifiers
 /// scoped to a single setting (`.windowSize` / `.customPrompt` / `.favoriteTools` /
 /// `.aiProvider`); the system ⌘, Settings scene still shows everything (`.all`).
 enum SettingsSection: String {
-    case all, windowSize, customPrompt, favoriteTools, outputDirectory, scripts, aiProvider
+    case all, windowSize, customPrompt, favoriteTools, outputDirectory, scripts, aiProvider, clipboard, help
 
     /// Title for the settings window when opened scoped to this section.
     var windowTitle: String {
         switch self {
-        case .all:             return "AI Drop Settings"
+        case .all:             return "Dragaway Settings"
         case .windowSize:      return "Window Size"
         case .customPrompt:    return "Custom Prompts"
         case .favoriteTools:   return "Favorite Tools"
         case .outputDirectory: return "Output Directory"
         case .scripts:         return "Scripts"
         case .aiProvider:      return "AI Provider"
+        case .clipboard:       return "Clipboard & Capture"
+        case .help:            return "Help"
         }
     }
 }
@@ -28,6 +30,31 @@ struct SettingsView: View {
 
     @AppStorage("selectedProvider") private var selectedProvider = AIProviderType.groq.rawValue
     @AppStorage("uiScale")          private var uiScaleRaw       = UIScale.small.rawValue
+    @AppStorage("screenshotsToSession")         private var screenshotsToSession  = false
+    @AppStorage("clipboardSessionHotkeyEnabled") private var clipboardHotkeyEnabled = true
+    /// Sub-mode of screenshots→session: "instant" (thumbnail off, immediate) or
+    /// "thumbnail" (preview kept, session opens after the ~5 s save delay).
+    @AppStorage("screenshotCaptureMode")        private var screenshotMode = "instant"
+
+    /// The macOS floating thumbnail goes off only while the feature is on AND in
+    /// instant mode; any other combination restores the system default.
+    private func applyThumbnailPreference() {
+        ScreenCapturePrefs.setThumbnailDisabled(screenshotsToSession && screenshotMode == "instant")
+    }
+
+    /// One hotkey line on the Help page: key chip + description.
+    private func helpRow(_ keys: String, _ text: String) -> some View {
+        HStack(spacing: 10) {
+            Text(keys)
+                .font(.system(.caption, design: .monospaced).weight(.semibold))
+                .padding(.horizontal, 6)
+                .padding(.vertical, 2)
+                .background(RoundedRectangle(cornerRadius: 4).fill(.quaternary.opacity(0.6)))
+                .frame(minWidth: 84, alignment: .leading)
+            Text(text).font(.caption)
+            Spacer(minLength: 0)
+        }
+    }
     @ObservedObject private var promptStore = PromptStore.shared
     @ObservedObject private var toolsStore  = FavoriteToolsStore.shared
     @ObservedObject private var outputStore = OutputDirectoryStore.shared
@@ -94,6 +121,81 @@ struct SettingsView: View {
                     Text("Takes effect on the next drag.")
                         .font(.caption)
                         .foregroundColor(.secondary)
+                }
+                .padding(.vertical, 4)
+            }
+            }
+
+            if shows(.clipboard) {
+            Section("Clipboard & Capture") {
+                VStack(alignment: .leading, spacing: 14) {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Toggle("Open new screenshots in a session", isOn: $screenshotsToSession)
+                        Text("Take a screenshot with the native ⇧⌘4 / ⇧⌘5 — Dragaway opens the saved file in a session automatically. (macOS reserves those shortcuts, so they can't be overridden directly; the file still lands where your screenshots normally save.)")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                        if screenshotsToSession {
+                            Picker("", selection: $screenshotMode) {
+                                Text("Instant — skip the floating thumbnail").tag("instant")
+                                Text("Keep the floating thumbnail").tag("thumbnail")
+                            }
+                            .pickerStyle(.radioGroup)
+                            .labelsHidden()
+                            .padding(.top, 4)
+                            Text(screenshotMode == "instant"
+                                 ? "Screenshots save immediately and the session opens right away. Trade-off: macOS's corner preview is turned off system-wide, so its quick actions (markup, drag) aren't available for any screenshot."
+                                 : "The corner preview keeps working as usual — but macOS only writes the screenshot file once the preview is dismissed or times out (~5 s), so the session opens after that delay.")
+                                .font(.caption)
+                                .foregroundColor(.orange.opacity(0.9))
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                    }
+                    VStack(alignment: .leading, spacing: 4) {
+                        Toggle("⌃⌘N — New session from clipboard", isOn: $clipboardHotkeyEnabled)
+                        Text("Press ⌃⌘N anywhere to open whatever is in your clipboard (text, image, link, or copied files) in a new session — including screenshots taken to the clipboard with ⌃⇧⌘4.")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+                .padding(.vertical, 4)
+                .onChange(of: screenshotsToSession) { _, _ in
+                    applyThumbnailPreference()
+                    NotificationCenter.default.post(name: .captureSettingsChanged, object: nil)
+                }
+                .onChange(of: screenshotMode) { _, _ in
+                    applyThumbnailPreference()
+                }
+                .onChange(of: clipboardHotkeyEnabled) { _, _ in
+                    NotificationCenter.default.post(name: .captureSettingsChanged, object: nil)
+                }
+            }
+            }
+
+            if shows(.help) {
+            Section("Hotkeys") {
+                VStack(alignment: .leading, spacing: 8) {
+                    helpRow("⌃⌘V",       "Clipboard history picker (last 10)")
+                    helpRow("⌃⌘N",       "New session from the current clipboard")
+                    helpRow("⌥1 … ⌥9",   "Open the dropped file in a favorite app")
+                    helpRow("Tab / ⇧Tab", "Cycle the session card's tabs")
+                    helpRow("⇧ + drag",  "Radial launcher (change under Add Hotkey…)")
+                    helpRow("Esc",       "Dismiss the pill / close the card")
+                }
+                .padding(.vertical, 4)
+            }
+            Section("Where things live") {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("• Drag files, text, links, or images onto the notch to start a session.\n• Right-click files in Finder → Quick Actions → “Add to Dragaway”.\n• Utilities tab: local conversions (PDF ⇄ Word/Markdown, images, video) — no upload.\n• Scripts tab: run your own commands on the dropped file.\n• Screenshots → session: Settings → Clipboard & Capture.\n• Recent + Search Sessions: menu bar icon.")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+
+                    Button("Restart Tutorial") {
+                        NotificationCenter.default.post(name: .showTutorial, object: nil)
+                    }
+                    .padding(.top, 6)
                 }
                 .padding(.vertical, 4)
             }

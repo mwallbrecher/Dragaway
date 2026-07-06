@@ -56,4 +56,25 @@ final class GeminiProvider: AIProvider {
         let decoded = try JSONDecoder().decode(OpenAICompatibleResponse.self, from: data)
         return decoded.choices.first?.message.content ?? "No response"
     }
+
+    func replyStream(messages: [ChatTurn], imageURL: URL?, plan: RoutingPlan,
+                     onDelta: @escaping (String) -> Void) async throws -> String {
+        guard isAvailable else { throw AIError.noAPIKey(provider: name) }
+        var request = URLRequest(url: URL(string: baseURL)!)
+        request.httpMethod = "POST"
+        request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        // Same thinking-token headroom as reply() — see the cutoff note above.
+        let cap = max(plan.maxOutputTokens + 1024, 2048)
+        let body: [String: Any] = [
+            "model": model(for: plan.tier),
+            "messages": openAICompatMessages(messages, imageURL: imageURL, attachImage: true),
+            "max_tokens": cap,
+            "temperature": 0.3,
+            "reasoning_effort": "low",
+            "stream": true
+        ]
+        request.httpBody = try JSONSerialization.data(withJSONObject: body)
+        return try await openAICompatSSE(request: request, onDelta: onDelta)
+    }
 }

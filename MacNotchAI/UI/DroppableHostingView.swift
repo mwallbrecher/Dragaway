@@ -25,6 +25,9 @@ final class DroppableHostingView: NSHostingView<OverlayView> {
     // Cache the result and reuse it in performDragOperation so we never touch
     // the pasteboard again at drop time.
     private var cachedDropURLs: [URL] = []
+    /// Non-file payload (text / link / raw image) captured at draggingEntered —
+    /// materialized into a small local file only when the drop actually lands.
+    private var cachedPayload: DropMaterializer.Payload?
 
     required init(rootView: OverlayView) {
         super.init(rootView: rootView)
@@ -33,6 +36,12 @@ final class DroppableHostingView: NSHostingView<OverlayView> {
             .fileURL,
             NSPasteboard.PasteboardType("NSFilenamesPboardType"),
             NSPasteboard.PasteboardType("public.file-url"),
+            // "Drag anything" — text selections, links, raw images (no file behind them).
+            .string,
+            .URL,
+            NSPasteboard.PasteboardType("public.url"),
+            .tiff,
+            .png,
         ])
         // Transparent layer — prevents gray/white flash before SwiftUI paints
         wantsLayer = true
@@ -53,7 +62,16 @@ final class DroppableHostingView: NSHostingView<OverlayView> {
 
     override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
         let urls = extractURLs(from: sender.draggingPasteboard)
-        guard !urls.isEmpty else { return [] }
+        if urls.isEmpty {
+            // Non-file drag (text / link / raw image) — capture the payload now while
+            // the drag pasteboard is fully open; it's written to disk only on drop.
+            guard let payload = DropMaterializer.capture(from: sender.draggingPasteboard)
+            else { return [] }
+            cachedPayload = payload
+            cachedDropURLs = []
+            OverlayViewModel.shared.isDragHovering = isOverPillArea(sender)
+            return .copy
+        }
         // Cache here — pasteboard is fully open while the drag is in flight.
         cachedDropURLs = urls
         // Hover only when cursor is actually over the visible pill, not the transparent
@@ -64,8 +82,10 @@ final class DroppableHostingView: NSHostingView<OverlayView> {
     }
 
     override func draggingUpdated(_ sender: NSDraggingInfo) -> NSDragOperation {
-        // URLs already cached from draggingEntered — no second pasteboard read needed.
-        guard !cachedDropURLs.isEmpty else { return [] }
+        // Payload already cached from draggingEntered — no second pasteboard read needed.
+        // Accept while EITHER file URLs or a non-file payload (text/link/image) is
+        // cached; guarding on URLs alone silently refused every "drag anything" drop.
+        guard !cachedDropURLs.isEmpty || cachedPayload != nil else { return [] }
         // Re-evaluate hover as the cursor moves within the window so the jelly fires
         // exactly when the cursor crosses into the pill, not into the canvas border.
         OverlayViewModel.shared.isDragHovering = isOverPillArea(sender)
@@ -74,6 +94,7 @@ final class DroppableHostingView: NSHostingView<OverlayView> {
 
     override func draggingExited(_ sender: NSDraggingInfo?) {
         cachedDropURLs = []
+        cachedPayload = nil
         OverlayViewModel.shared.isDragHovering = false
     }
 
@@ -86,8 +107,15 @@ final class DroppableHostingView: NSHostingView<OverlayView> {
         OverlayViewModel.shared.isDragHovering = false
         DragMonitor.shared.dragCompleted()
 
-        let urls = cachedDropURLs
+        var urls = cachedDropURLs
         cachedDropURLs = []
+        // Non-file drop → materialize the captured text / link / image into a small
+        // local file so the whole downstream file pipeline works unchanged.
+        if urls.isEmpty, let payload = cachedPayload,
+           let materialized = DropMaterializer.materialize(payload) {
+            urls = [materialized]
+        }
+        cachedPayload = nil
         guard let first = urls.first else { return false }
 
         let vm = OverlayViewModel.shared
@@ -111,7 +139,7 @@ final class DroppableHostingView: NSHostingView<OverlayView> {
         if supported.isEmpty {
             vm.stage = .error(
                 url: first,
-                message: "\"\(first.lastPathComponent)\" can't be analysed.\nAI Drop supports PDF, text, images, and code files."
+                message: "\"\(first.lastPathComponent)\" can't be analysed.\nDragaway supports PDF, text, images, and code files."
             )
             grabFocusAfterDrop()
             return true

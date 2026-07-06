@@ -1,8 +1,176 @@
 # AI Drop — App Store Roadmap & Review
 
+## Website — initial tool/text pop choreography (DONE 2026-07-06)
+
+- [x] Disable the file-type toggle progress lighting again while keeping the auto replay tab push.
+- [x] Create a website Git checkpoint after the progress-lighting removal.
+- [x] Add the existing tool shell pop-in language to the initial boot animation without retiming the
+      existing pill/drop/fill beats.
+- [x] Replace the first-run `Your daily tools` write-in with quick per-letter pops coupled to the tool
+      pop order/timing.
+- [x] Make the initial pop visibly readable by adding a short pre-pop hold and slightly longer first-boot
+      pop timing.
+- [x] Cache-bust touched website assets and verify syntax/browser state.
+
+---
+
+## Feature — Smarter suggestions v2 (IMPLEMENTED 2026-07-03 — build green; owner test pending)
+
+- Catalog grown +18 actions (36 total): CSV (Summarise Table, Describe the Data, Show
+  Trends, Find Outliers, Suggest Charts, Make a Report), Image (Analyse UI, Design
+  Reference, Rebuild as HTML/CSS), Text (Draft Email Reply, Extract To-Dos, Extract
+  Names & Contacts, Explain Simply, Proofread & Fix), Notes (5-Slide Outline, LinkedIn
+  Post, Turn into a Brief), Code (Write Tests).
+- Selection stays capped at 6; per-type pools are candidate lists, `reorder` promotes.
+- `ActionFrecency` (Core): local per-category learned frecency (decayed counts in
+  UserDefaults, no telemetry) — user's top-2 lead. Recorded in sendTurn.
+- `FileSignals` extended: CSV header/numeric-column detection, email/todo/notes flavour;
+  `reorder` gains filename-keyword rules (invoice/design/resume/notes) + primary URL.
+- Honest scope: "Suggest Charts" recommends (no rendering — no code exec); Describe-Data
+  row counts reflect the bounded peek on huge files; vision actions need a vision model.
+
+## v1.2 slice — drag anything + streaming + history search (IMPLEMENTED 2026-07-03 — build green; owner test pending)
+
+Approved scope, build order:
+1. **Sparkle build-gate** — wrap UpdaterController in `#if canImport(Sparkle)` (+ no-op stub)
+   so the project builds before the package is added in Xcode.
+2. **Drag anything** — pill wakes for TEXT / WEB-URL / IMAGE drags, not just files.
+   `DropMaterializer` (new, Core) captures the payload at draggingEntered and writes it to
+   Application Support/Drops on drop (.txt / .png, pruned to newest 50) → the whole
+   existing file pipeline (chips, AI, utilities, history) just works. Radial stays
+   file-only (apps open files, not selections). Known trade-off: in-app text drags also
+   show the pill — the drag hotkey gate is the opt-out.
+   Backlog: fetch+strip web pages (URL drop currently analyses the URL string), file
+   promises (Photos/Mail).
+3. **Streaming responses** — `AIProvider.replyStream(…, onDelta:)` with a non-streaming
+   default; real SSE for Groq+OpenAI (shared helper), Anthropic, Gemini, Ollama
+   (hosted Worker stays non-streaming for now). First delta flips loading→result and
+   appends a placeholder assistant bubble whose text grows in place (stable ChatMessage
+   id so SwiftUI doesn't recreate the row). Window resizes once at completion.
+4. **Session-history search** — search window (clipboard-picker pattern) filtering by
+   filename + prompts + result text; row click reopens via the existing restore path.
+   `maxSessions` 10 → 25. Menu: "Search Sessions…" atop Recent Sessions.
+
+---
+
 > Plan written 2026-05-29. Status of the codebase: feature-complete BYOK app, distributed via
 > Developer-ID DMG. Goal: ship on the App Store with a metered free → paid model.
 > **Nothing below is implemented yet — this is the plan to confirm before building.**
+
+---
+
+## Website — stat banner boot choreography (DONE 2026-07-05)
+
+- [x] Create a dedicated Git repo in `website/` and commit the current website baseline before animation changes.
+- [x] Add the speed stat banner to the hero boot choreography after the pill expands.
+- [x] Animate the banner background in first, then reveal each metric sequentially.
+- [x] Reuse the hero 8.8x count-up visual language for the banner numbers without coupling it to the hero copy.
+- [x] Cache-bust touched website assets and verify syntax/browser state.
+
+---
+
+## Website — speed stat banner rewrite (DONE 2026-07-04)
+
+- [x] Replace the visible study disclaimer paragraph with a compact three-column metric banner.
+- [x] Keep the final speedup factor unchanged and add placeholder time/cost metrics.
+- [x] Add hover information to each number and a bottom "Hover the numbers for information. Learn more" link row.
+- [x] Update saved-time metric to 37.5s and calculate daily savings as $10.42 at 20 interactions/day and $50/hour.
+- [x] Cache-bust touched assets and verify syntax/browser load.
+
+---
+
+## Website — cleaner hero loop transition (DONE 2026-07-03)
+
+- [x] Replace abrupt idle replay restart with a short replay prelude.
+- [x] Fade the expanded window out before resetting the demo.
+- [x] Show cursor/file briefly, fade tools in, then start the existing choreography unchanged.
+- [x] Add a 600 ms empty pause after fadeout, then pop cursor/file before the tools fade in.
+- [x] Delay the tool reveal slightly more and pop tools in one-by-one in a fast random order.
+- [x] Keep the tools rotating while the replay pop-in sequence reveals them.
+- [x] Smooth the handoff from replay pop-in to the normal orbit loop by separating outer rotation from inner icon pop.
+- [x] Keep the replay pop-in radius pinned to the normal choreography's starting radius so the loop handoff does not jump.
+- [x] Move the glass tile styling into an inner shell so the full tool tile pops in, not just the logo.
+- [x] Cache-bust touched assets and verify syntax/browser load.
+
+---
+
+## Website — orbit radius peak timing (DONE 2026-07-03)
+
+- [x] Move the orbit radius peak 80 ms earlier without changing the shared drop/morph/fill timeline.
+- [x] Cache-bust the touched website assets.
+- [x] Verify syntax and browser load.
+
+---
+
+## Website — Learn more + Contribute pages (DONE 2026-07-03)
+
+- [x] Add a `learn-more.html` subpage covering pricing, data processing, AI/provider behavior, permissions, clipboard privacy, and beta/distribution details.
+- [x] Add a `contribute.html` subpage with a simple name + message form that opens an addressed email draft.
+- [x] Extend shared website styling for static subpages, FAQ rows, and the contribution form without disturbing the hero animation.
+- [x] Link both pages from the main nav/footer and keep cache-busting current.
+- [x] Verify HTML structure, browser load, form `mailto:` output, and console errors.
+
+---
+
+## Website — dragaway rebrand (DONE 2026-07-02)
+
+- [x] Replace visible "AI Drop" branding with "dragaway".
+- [x] Rename the first feature tab to "Drop" while keeping the demo behavior intact.
+- [x] Use `assets/Dragaway.png` for the website icon/brand mark.
+- [x] Switch visible brand logos to `assets/Dragaway-white.png` with no corner radius.
+- [x] Verify the page in the browser.
+
+---
+
+## Website — hero text choreo polish (DONE 2026-07-03)
+
+- [x] Rework `Your daily tools` replay activation to use the same single shimmer behavior as `one drag away`.
+- [x] Add a very subtle body-text shimmer when the supporting copy activates.
+- [x] Verify in browser.
+
+---
+
+## Website — headline lead evenness fix (DONE 2026-07-03)
+
+- [x] Remove the horizontal white gradient hotspot from `Your daily tools`.
+- [x] Remove the persistent lead-line glow/cutout after animation settles.
+- [x] Verify in browser.
+
+---
+
+## Website — remove hero background cutout (DONE 2026-07-03)
+
+- [x] Disable the demo backdrop/scrim layers that create the vertical cutout under hero copy.
+- [x] Verify in browser that no backdrop/scrim layer is rendered over the copy.
+
+---
+
+## Website — disable text loop choreo (DONE 2026-07-03)
+
+- [x] Keep the first hero text intro intact.
+- [x] Disable the replay dim/re-light choreography without removing the code path.
+- [x] Verify in browser.
+
+---
+
+## Website — lead create fade and body flicker removal (DONE 2026-07-03)
+
+- [x] Remove the body text flicker/glimmer.
+- [x] Replace `Your daily tools` create animation with a simple immediate fade-in.
+- [x] Tune the lead fade to start at 50 ms with a longer duration.
+- [x] Replace the lead fade with a typewriter-style write-in reveal.
+- [x] Verify in browser.
+
+---
+
+## Website — pre-ramp orbit radius polish (DONE 2026-07-03)
+
+- [x] Make the tool orbit radius slightly larger before the spin ramp-up.
+- [x] Ease it back into the existing radius during the ramp so the fly-in choreography stays intact.
+- [x] Change the radius change into a visible animation: 0.9 → 1.2 → 1.0.
+- [x] Revert the mistaken expand beat delay so the pill/card choreography keeps its previous timing.
+- [x] Hold the radius at 0.9 for the first 80 ms, then grow to 1.2 before returning to 1.0.
+- [x] Verify in browser.
 
 ---
 
@@ -1514,3 +1682,158 @@ menu-bar submenu (native NSMenu, matches screenshot).
       trims oldest; click reopens overlay w/ latest result + back-arrow to prior; ⌥ shows per-row
       remove; Clear History empties; survives app relaunch.
 - [ ] **Lesson** — capture any NSMenu attributedTitle/alternate-item or AppSupport-IO gotchas.
+
+---
+
+## Website — External file-type toggle for AI Drop hero (PLANNED)
+
+**Goal:** move the mock Notch's internal file-type tabs out of the card and render them as a segmented
+toggle above the AI Drop demo. The toggle labels use file extensions (`.pdf`, `.png`, `.md`, `.xlsx`);
+selecting one changes the dropped file, caption/actions, and the mock Notch card height/content so the
+window feels adapted to that file type.
+
+- [x] **Data shape** — add a short `ext` label to each `pill.tabs[]` item in `website/data.js`.
+- [x] **Markup** — add a `#fileTypeToggle` container above the `#sim` demo in `website/index.html`.
+- [x] **Renderer/state** — in `website/app.js`, render the external toggle from `D.pill.tabs`, track the
+      selected tab id, and make `renderCard()`, `renderTabRows()`, `setFile()`, and the intro fill
+      sequence use that selected type instead of embedded card tabs.
+- [x] **Remove internal tabs from the Notch mock** — keep the caption/actions inside the card, but no
+      `.ph-tabs` row inside the pill.
+- [x] **Responsive card sizing** — adjust CSS/JS so the expanded mock window height follows the active
+      file type's action count while staying within sensible desktop/mobile bounds.
+- [x] **Verify** — reload `http://localhost:4399/`, test all four toggles, desktop layout,
+      mobile smoke, and console errors.
+
+---
+
+## Website — Logo orbit + idle autoplay for AI Drop hero (DONE)
+
+**Goal:** replace the orbiting SF-symbol tool tiles with all app logos currently in
+`website/assets/`, while keeping Scripts, scissors, and audio waveform as non-logo utility tiles with
+distinct styling. Remove the Replay button. The AI Drop demo should automatically restart after a short
+idle delay only when the pointer is not over the AI Drop demo/window area.
+
+- [x] **Orbit data** — change `AIDROP.orbit` from plain icon names to typed items:
+      `{type:"logo", logo, name}` for every suitable app logo in `assets/`, plus utility items for
+      Scripts, scissors, and audio waveform.
+- [x] **Orbit renderer** — update `buildChips()` in `website/app.js` to render logo tiles with `<img>`
+      and utility tiles with `[data-icon]`, preserving the current orbit/fly-in choreography.
+- [x] **Styling** — add visual variants for logo tiles and for the three utility tiles so Scripts,
+      scissors, and waveform remain in the orbit but read differently from app logos.
+- [x] **Remove Replay** — remove the Replay button from `website/index.html`, delete its click binding,
+      and keep the caption aligned without it.
+- [x] **Idle autoplay** — after the demo reaches `done`, schedule a replay after a delay; cancel while
+      the pointer is over the AI Drop demo/window area and resume the idle timer after pointer leave.
+- [x] **Verify** — hard reload the local site, check orbit assets render, idle replay pauses on hover,
+      restarts after leave, no Replay button remains, mobile smoke, and console errors.
+
+## Website — Logo orbit refinements (DONE)
+
+**Goal:** keep the orbit feeling less sorted and less text-heavy: remove AI Drop / Pages / Preview from
+the orbit, render the on-device utility tools as icon-only glass tiles, reshuffle the orbit order for
+every replay, and keep hero text from replaying after the first boot-up.
+
+- [x] **Orbit data** — remove AI Drop, Pages, and Preview from `website/data.js` orbit items.
+- [x] **Utility tiles** — render Scripts, scissors, and audio waveform without visible text while keeping
+      their tooltip labels.
+- [x] **Glass styling** — make logo and utility orbit tiles share the same glass base; only tint differs.
+- [x] **Replay shuffle** — randomize the orbit item order every `play()`/replay so the fly-in order is not
+      visually sorted.
+- [x] **Text replay** — keep the hero copy and boot captions from replaying after the initial boot-up.
+- [x] **Verify** — syntax check, asset check, browser hard reload, confirm removed items, no visible utility
+      labels, shuffled replay order, no text replay, and no console errors.
+
+## Website — Demo actions + seeded rows (DONE)
+
+**Goal:** make the AI Drop hero demo reflect the full action catalogue shown lower on the page, make
+the Open-in row vary by selected file type, mark AI actions subtly with a sparkle at the right edge of
+each row, and shuffle the demo rows with the same replay seed so the card does not feel sorted.
+
+- [x] **Data mapping** — add fileType/category references for the four demo tabs and define per-tab Open-in
+      app lists.
+- [x] **Action source** — generate demo rows from `fileTypes[].does` plus the generic "Any file" actions.
+- [x] **Seeded shuffle** — reuse the current replay seed to shuffle action rows and Open-in apps per replay.
+- [x] **AI marker** — render AI rows with a subtle right-edge sparkle icon and style it unobtrusively.
+- [x] **Sizing** — adjust mock card content height for the larger action catalogue without breaking mobile.
+- [x] **Sizing correction** — keep the full action catalogue scrollable but cap the visible action area to
+      about five rows so the AI Drop window returns to the prior compact height.
+- [x] **Animation correction** — render the action catalogue as plain rows inside one animated
+      `.ph-tabcontent` scrollbox, not as one `fill` animation per action.
+- [x] **Bounded chip reveal** — animate only the first seven visible chips with a pop-in, then skip the
+      remaining scrollbox rows and continue into the Open-in launcher animation.
+- [x] **Prompt micro-animation** — type "Ask anything..." into the prompt after the launcher reveal, then
+      pop in a blue mic button.
+- [x] **ChatGPT icon + Pages launcher** — force the new `assets/chatgpt.png` to load in the website demo
+      and add Apple Pages as an Open-in launch option.
+- [x] **Legacy hero actions** — remove "Show in Finder" / "Open in a favorite app" from demo actions,
+      restore the old backup hero options such as "Find trends" into the Notch demo.
+- [x] **File groups section rewrite** — keep the hero demo unchanged, replace the file-type cards with
+      Text / Media / Data technical groups, supported extensions, local actions, and a mixed AI prompt list.
+- [x] **Remove Section 3 toggle** — show file groups directly and rename the demo file-type toggle labels
+      from extensions to category names.
+- [x] **Orbit acceleration timing** — delay the AI Drop hero tools' spin acceleration slightly while
+      keeping the drop/fill choreography intact.
+- [x] **Cursor file ghost styling** — make the dragged file proxy look more like a real macOS file while
+      keeping it visually related to the dropped file badge inside the AI Drop window.
+- [x] **Cursor file ghost frost + categories** — give the cursor-attached file the same frozen glass
+      language as the orbit tools/window and tint/icon it by Text, Media, and Data category.
+- [x] **Cursor file ghost flattening** — remove the colored tint/deep lighting from the cursor-attached
+      file and keep only a flat frozen surface with a subtle liquid-glass stroke.
+- [x] **Cursor file ghost icon clarity** — keep the flat neutral file ghost but restore clearly visible,
+      distinct file-type icons for text, media, docs, and data.
+- [x] **Cursor file ghost visible icons** — make the neutral file ghost icons visually obvious in the
+      actual animation, not only technically present in the DOM.
+- [x] **Cursor drag easing** — replace the linear cursor/file drag path with a smoother, more natural
+      eased movement into the AI Drop pill.
+- [x] **Revert cursor drag easing + soften icon** — restore the prior simple drag path and make the
+      cursor-file icon stroke thinner with light alpha.
+- [x] **Website demo video** — replace the Section 2 demo placeholder with the local
+      `website/notch-demo.mp4` recording and verify it loads in the browser.
+- [x] **Cursor/file vanish offset** — keep the AI Drop pill expansion timing unchanged, but make the
+      cursor-attached file disappear 50ms later.
+- [x] **Smoother pill morph** — make the waiting pill expand into the card with simultaneous width/height
+      motion and a subtle liquid distortion, without changing the drag/fill choreography.
+- [x] **Earlier morph/vanish timing** — start the smoother pill morph and cursor/file vanish 100ms earlier,
+      while leaving the rest of the hero choreography in place.
+- [x] **Higher pill drop + longer drag** — make the waiting pill visibly enter from slightly higher up and
+      lengthen the cursor/file drag movement without moving the drop/morph/fill beats.
+- [x] **Earlier/slower pill drop** — start the waiting-pill drop animation earlier, extend its duration by
+      the same amount, and keep the settled endpoint unchanged.
+- [x] **Hero copy choreography** — keep "Your daily tools" visible from the start, reveal "one drag away"
+      when the pill expands, and reveal the body copy at the existing final copy-reveal beat.
+- [x] **Hero headline pop** — remove the comma, enlarge the AI Drop hero headline, and make "one drag
+      away" pop in while "Your daily tools" shifts and shrinks slightly.
+- [x] **Revert hero headline pop** — restore the previous hero-copy choreography styling: comma back,
+      normal headline size, and no lead-shrink/tail-pop treatment.
+- [x] **Verify** — syntax check, browser hard reload, all four toggles, row counts, app variation, seeded
+      shuffle changes, AI markers, mobile smoke, and console errors.
+
+## Website — loop number shine refinement (DONE 2026-07-05)
+
+- [x] Keep the first boot-up count-up/popup choreography for the faster/stat numbers.
+- [x] On idle replay, keep number values final and replay only a subtle shine/glow.
+- [x] Cache-bust the touched website assets and verify syntax/browser state.
+
+## Website — replay file-type rotation (DONE 2026-07-06)
+
+- [x] Rename the third hero demo toggle from the repeated Text label to Notes.
+- [x] Advance the hero demo file type on every automatic replay: Text → Media → Notes → Data.
+- [x] Cache-bust touched website assets and verify syntax/browser state.
+
+## Website — file-type toggle liquid pill (DONE 2026-07-06)
+
+- [x] Replace the active toggle button background with a persistent moving selection pill.
+- [x] Add a clean/snappy ease-in-out slide plus subtle liquid squash on file-type changes.
+- [x] Recalculate the pill position on resize and cache-bust touched website assets.
+- [x] Verify syntax and browser state.
+
+## Website — auto toggle progress push (DONE 2026-07-06)
+
+- [x] Add a subtle left-to-right progress light to the file-type toggle during the idle replay delay.
+- [x] Correct the progress effect so it fills inside the active blue selection pill instead of sweeping across
+      the whole toggle.
+- [x] Make the thumb progress fill from the beginning of the idle delay and preserve/resume the current
+      progress state while hovering the demo.
+- [x] Move the automatic tab advance before the replay window fade so the selection pill visibly slides.
+- [x] Use the same thumb push/squash impulse for automatic tab changes as for manual clicks.
+- [x] Cache-bust touched website assets and verify syntax/browser state.

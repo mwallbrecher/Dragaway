@@ -12,8 +12,16 @@ final class GlobalHotkey {
     /// Called on the main thread when the hotkey fires.
     fileprivate var onFire: (() -> Void)?
 
-    // 'AIDR' — any non-zero signature; pairs with id to identify our hotkey.
-    private let hotKeyID = EventHotKeyID(signature: 0x4149_4452, id: 1)
+    // 'AIDR' — any non-zero signature; pairs with a UNIQUE per-instance id so several
+    // GlobalHotkey instances can coexist (⌃⌘V picker + ⌃⌘N new-session). The callback
+    // matches the event's id against the instance's own and passes mismatches along.
+    private static var nextID: UInt32 = 0
+    fileprivate let hotKeyID: EventHotKeyID
+
+    init() {
+        Self.nextID += 1
+        hotKeyID = EventHotKeyID(signature: 0x4149_4452, id: Self.nextID)
+    }
 
     /// Register `keyCode` (virtual key, e.g. `kVK_ANSI_V`) with Carbon modifier mask
     /// (`cmdKey` / `controlKey` / `optionKey` / `shiftKey`). Replaces any prior key.
@@ -46,9 +54,18 @@ final class GlobalHotkey {
 private func hotkeyCallback(_ next: EventHandlerCallRef?,
                             _ event: EventRef?,
                             _ userData: UnsafeMutableRawPointer?) -> OSStatus {
-    guard let userData else { return OSStatus(eventNotHandledErr) }
-    MainActor.assumeIsolated {
-        Unmanaged<GlobalHotkey>.fromOpaque(userData).takeUnretainedValue().onFire?()
-    }
+    guard let userData, let event else { return OSStatus(eventNotHandledErr) }
+
+    // Which registered hotkey fired? Each handler instance sees every hotkey event on
+    // the app target, so match the event's id against THIS instance's — otherwise
+    // pass it along the handler chain to the owning instance.
+    var hkID = EventHotKeyID()
+    GetEventParameter(event, EventParamName(kEventParamDirectObject),
+                      EventParamType(typeEventHotKeyID), nil,
+                      MemoryLayout<EventHotKeyID>.size, nil, &hkID)
+    let instance = Unmanaged<GlobalHotkey>.fromOpaque(userData).takeUnretainedValue()
+    guard hkID.id == instance.hotKeyID.id else { return OSStatus(eventNotHandledErr) }
+
+    MainActor.assumeIsolated { instance.onFire?() }
     return noErr
 }

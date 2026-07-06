@@ -1,6 +1,6 @@
 import AppKit
 
-/// Cross-process hand-off from the (sandboxed) "Add to AI Drop" Finder Quick Action
+/// Cross-process hand-off from the (sandboxed) "Add to Dragaway" Finder Quick Action
 /// extension to the (non-sandboxed, always-on) main app.
 ///
 /// The extension can't message the main app directly across the sandbox boundary, so it

@@ -247,7 +247,7 @@ final class SpeechRecognizer: ObservableObject {
     private func showPermissionAlert(_ name: String) {
         let alert = NSAlert()
         alert.messageText = "\(name) access denied"
-        alert.informativeText = "Enable \(name) for AI Drop in System Settings → Privacy & Security."
+        alert.informativeText = "Enable \(name) for Dragaway in System Settings → Privacy & Security."
         alert.addButton(withTitle: "Open Settings")
         alert.addButton(withTitle: "Cancel")
         NSApp.activate(ignoringOtherApps: true)

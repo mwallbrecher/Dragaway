@@ -283,7 +283,7 @@ private struct WaitingPillView: View {
                 .foregroundColor(vm.isDragHovering ? .white : .white.opacity(0.75))
                 .contentTransition(.symbolEffect(.replace))
 
-            Text(vm.isDragHovering ? "  Release file " : "Drop file here")
+            Text(vm.isDragHovering ? "  Release here " : "Drop anything")
                 .font(.system(size: 14 * scale, weight: .semibold))
                 .foregroundColor(.white)
                 .contentTransition(.opacity)
@@ -409,24 +409,6 @@ private struct ChipsColumnView: View {
                 PromptField(text: $vm.customPrompt, onSubmit: runCustomPrompt)
             }
 
-            // Handoff confirmation pill — pops in ~0.18 s after navigation, stays
-            // 6 s then dissolves with a wobbly spring so it feels alive not abrupt.
-            if let name = vm.handoffProviderName {
-                HStack(spacing: 6 * scale) {
-                    Image(systemName: "checkmark.circle.fill")
-                        .font(.system(size: 11 * scale, weight: .semibold))
-                        .foregroundColor(.green)
-                    Text("Session opened in \(name).")
-                        .font(.system(size: 11 * scale, weight: .medium))
-                        .foregroundColor(.white.opacity(0.55))
-                }
-                .padding(.horizontal, 10 * scale)
-                .padding(.vertical, 6 * scale)
-                .frame(maxWidth: .infinity, alignment: .center)
-                .background(Color.green.opacity(0.10))
-                .liquidGlassCapsule(tintOpacity: 0.08)
-                .transition(.scale(scale: 0.85, anchor: .bottom).combined(with: .opacity))
-            }
         }
         .padding(18 * scale)
         .frame(width: 280 * scale, alignment: .topLeading)
@@ -1227,13 +1209,8 @@ private struct TwoColumnView: View {
             }
 
             Spacer(minLength: 0)
-
-            // Handoff button — visible once we have a result
-            if case .result(let url, let act, let text) = vm.stage {
-                HandoffButton(fileURL: url, action: act, result: text)
-                    .padding(.top, 4 * scale)
-                    .transition(.opacity.animation(.easeInOut(duration: 0.18)))
-            }
+            // "Continue in [Provider]" handoff removed — the result stays in-app; users
+            // can launch into another app directly via the radial launcher / Open-in row.
         }
         .padding(14 * scale)
     }
@@ -1821,26 +1798,12 @@ private struct FilePillsRow: View {
                             ))
                     }
 
-                    // Overflow controls — only when there are more than 2 files total
-                    if allFiles.count > 2 {
-                        HStack(spacing: 4 * scale) {
-                            // "+N" badge: remaining files beyond the current window
-                            if hiddenCount > 0 {
-                                Text("+\(hiddenCount)")
-                                    .font(.system(size: 9 * scale, weight: .bold))
-                                    .foregroundColor(.white)
-                                    .padding(.horizontal, 5 * scale)
-                                    .padding(.vertical, 2 * scale)
-                                    .background(Color.accentColor.opacity(0.75))
-                                    .clipShape(Capsule(style: .continuous))
-                                    .transition(.scale(scale: 0.7).combined(with: .opacity))
-                            }
-                            // Right arrow
-                            if hiddenCount > 0 {
-                                carouselArrow(forward: true)
-                                    .transition(.scale(scale: 0.7).combined(with: .opacity))
-                            }
-                        }
+                    // Overflow control — a right arrow to reveal the hidden files.
+                    // (No "+N" badge: it read as a stray blue bar and crowded the
+                    // header's trailing buttons against the window edge.)
+                    if allFiles.count > 2, hiddenCount > 0 {
+                        carouselArrow(forward: true)
+                            .transition(.scale(scale: 0.7).combined(with: .opacity))
                     }
 
                     // Share button — shares all files in the session together
@@ -2290,75 +2253,6 @@ private struct MinimizeButton: View {
     }
 }
 
-// MARK: - Handoff button
-
-/// "Continue in [Provider]" — copies context + opens the AI app.
-/// Morphs into a ✓ confirmation pill for 2 seconds after tapping.
-private struct HandoffButton: View {
-    let fileURL: URL
-    let action: AIAction
-    let result: String
-
-    @State private var didTap = false
-    @Environment(\.uiScale) private var scale
-
-    var body: some View {
-        Button {
-            guard !didTap else { return }
-            didTap = true
-            HandoffManager.handOff(fileURL: fileURL, action: action, result: result)
-            let vm = OverlayViewModel.shared
-            let providerName = HandoffManager.providerName()
-            if case .result = vm.stage {
-                // Navigate to stage 2 instantly — the button disappears with the card.
-                withAnimation(.spring(response: 0.40, dampingFraction: 0.82)) {
-                    vm.navigateBackToChips(savingResult: vm.stage, url: fileURL)
-                    vm.isChipsExpanded = false
-                }
-                // Pop the confirmation pill into the already-visible stage 2 card
-                // after the navigation spring has had a moment to settle.
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.18) {
-                    withAnimation(.spring(response: 0.30, dampingFraction: 0.72)) {
-                        vm.handoffProviderName = providerName
-                    }
-                }
-                // Calm fade-out after 6 s — well-damped so the pill dissolves
-                // cleanly without oscillating.
-                DispatchQueue.main.asyncAfter(deadline: .now() + 6.0) {
-                    withAnimation(.spring(response: 0.40, dampingFraction: 0.82)) {
-                        vm.handoffProviderName = nil
-                    }
-                }
-            }
-        } label: {
-            HStack(spacing: 5 * scale) {
-                Image(systemName: didTap ? "checkmark" : HandoffManager.providerIcon())
-                    .font(.system(size: 9 * scale, weight: .bold))
-                    .contentTransition(.symbolEffect(.replace))
-
-                Text(didTap
-                     ? "Copied · check clipboard"
-                     : "Continue in \(HandoffManager.providerName())")
-                    .font(.system(size: 11 * scale, weight: .medium))
-                    .lineLimit(1)
-
-                if !didTap {
-                    Image(systemName: "arrow.up.right")
-                        .font(.system(size: 9 * scale, weight: .semibold))
-                }
-            }
-            .foregroundColor(.white.opacity(didTap ? 1.0 : 0.45))
-            .padding(.horizontal, 10 * scale)
-            .padding(.vertical, 6 * scale)
-            .frame(maxWidth: .infinity)
-            .background(didTap ? Color.green.opacity(0.25) : Color.clear)
-            .liquidGlassCapsule(tintOpacity: didTap ? 0.10 : 0.18)
-        }
-        .buttonStyle(.plain)
-        .animation(.spring(response: 0.25, dampingFraction: 0.72), value: didTap)
-    }
-}
-
 // MARK: - Prompt field with mic
 
 /// Shared text-input bar used in both stage 2 (chips) and stage 3 (result right column).
@@ -2572,6 +2466,11 @@ private func sendTurn(provider: any AIProvider,
     let instruction = typedPrompt ?? action.systemPrompt
 
     if let typed = typedPrompt { PromptStore.shared.recordHistory(typed) }
+    // Learn which chip actions the user runs, per file category, so future
+    // suggestions lead with them (local frecency — see ActionFrecency).
+    if typedPrompt == nil, action != .freeform, !regenerate {
+        ActionFrecency.record(action, category: FileInspector.category(for: fileURL))
+    }
     vm.customPrompt = ""
     vm.cachedResult = nil
 
@@ -2599,10 +2498,10 @@ private func sendTurn(provider: any AIProvider,
     // Resolve the provider FRESH for this turn. The `provider` passed into OverlayView
     // is captured once when the overlay window is first built, and that window is reused
     // for the whole app lifetime (never recreated — see the window invariants). So after
-    // the user switches tier (BYOK ↔ AI Drop Free / Pro) the baked-in provider goes
+    // the user switches tier (BYOK ↔ Dragaway Free / Pro) the baked-in provider goes
     // STALE: requests keep routing through whatever tier was active at first launch.
     // Re-resolving here makes a switch take effect on the next request — no relaunch —
-    // and is why "AI Drop Free" requests were still hitting the stored BYOK key (flash).
+    // and is why "Dragaway Free" requests were still hitting the stored BYOK key (flash).
     let liveProvider = resolveProvider()
 
     Task {
@@ -2631,12 +2530,21 @@ private func sendTurn(provider: any AIProvider,
             // `forceTier` (manual "Go deeper") overrides the tier, keeping the ceiling.
             let basePlan = typedPrompt.map(RoutingPlan.forCustomPrompt) ?? action.routing
             let plan = forceTier.map { basePlan.with(tier: $0) } ?? basePlan
-            let text = try await liveProvider.reply(messages: turns, imageURL: base.imageURL,
-                                                    plan: plan)
+            // Streaming: deltas grow an assistant bubble live (BYOK providers all
+            // stream; the hosted Worker falls back to a single non-streamed reply).
+            let text = try await liveProvider.replyStream(
+                messages: turns, imageURL: base.imageURL, plan: plan
+            ) { delta in
+                vm.appendStreamDelta(delta, url: fileURL, action: action)
+            }
 
             vm.contentTruncated = base.truncated
             vm.isAwaitingReply  = false
-            vm.conversation.append(.init(role: .assistant, display: text, modelText: text))
+            // Swap the streamed bubble for the definitive text; if the provider
+            // didn't stream (no bubble), append the reply as before.
+            if !vm.finalizeStreamedReply(text) {
+                vm.conversation.append(.init(role: .assistant, display: text, modelText: text))
+            }
             // Don't double-log a regeneration — it answers an already-recorded turn.
             if !regenerate {
                 SessionHistoryStore.shared.recordTurn(
@@ -2645,6 +2553,7 @@ private func sendTurn(provider: any AIProvider,
             }
             applyStage(.result(url: fileURL, action: action, text: text))
         } catch {
+            vm.abortStreamedReply()   // keep any partial text; stop tracking the bubble
             vm.isAwaitingReply = false
             let msg = error.localizedDescription
             if priorTurns > 0 {
@@ -2670,7 +2579,7 @@ private func buildChatTurns(conversation: [OverlayViewModel.ChatMessage],
                             imageURL: URL?) -> [ChatTurn] {
     var turns: [ChatTurn] = [
         ChatTurn(role: "system", content:
-            "You are AI Drop, a concise assistant embedded in macOS. The user dropped a "
+            "You are Dragaway, a concise assistant embedded in macOS. The user dropped a "
             + "document or image and asks about it. Answer directly and format replies "
             + "in Markdown.")
     ]

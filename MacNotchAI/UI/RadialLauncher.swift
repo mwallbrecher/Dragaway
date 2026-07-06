@@ -5,7 +5,7 @@ import SwiftUI
 // MARK: - Controller
 
 /// Drives the radial app launcher — the "second drag mode". When a file drag starts
-/// with the radial modifier (⌃ by default) held, this shows a full-screen transparent
+/// with the radial modifier (⇧ by default) held, this shows a full-screen transparent
 /// panel with a wheel of the user's favorite apps centred on the cursor. Flick toward a
 /// wedge and release to open the dragged file in that app.
 ///
@@ -23,7 +23,7 @@ final class RadialLauncherController: ObservableObject {
     static let iconRadius:  CGFloat = 108
     static let iconSize:    CGFloat = 44
 
-    /// One slot on the wheel: a favorite app, or the special "AI Drop" slot that routes
+    /// One slot on the wheel: a favorite app, or the special "Dragaway" slot that routes
     /// the file into the pill/chips flow.
     enum Item {
         case app(FavoriteTool)
@@ -44,6 +44,14 @@ final class RadialLauncherController: ObservableObject {
     private var windowFrame: CGRect = .zero
     private var window: RadialWindow?
     private var committed = false
+    // Failsafe: the wheel is a full-screen, mouse-catching panel that normally tears
+    // down via the drag callbacks (performDragOperation / draggingEnded). If a drag
+    // ever ends WITHOUT those firing (released before the panel got its first
+    // draggingEntered, drag cancelled oddly), the invisible panel would swallow every
+    // click on screen. This timer polls the physical button state in .common mode
+    // (fires inside AppKit's drag loop) and force-dismisses shortly after release.
+    private var failsafeTimer: Timer?
+    private var buttonUpTicks = 0
     /// Sharing the drag with the notch pill — enables the pill-approach zone + handoff.
     private var coexist = false
     private var pillCenter: CGPoint = .zero   // view space
@@ -61,7 +69,7 @@ final class RadialLauncherController: ObservableObject {
         let apps = FavoriteToolsStore.shared.resolvedTools(for: urls)
         let showAIDrop = HotkeyManager.shared.radialShowsAIDrop
         var items: [Item] = apps.map { .app($0) }
-        // AI Drop takes the top-centre slot (index 0 = -90° = straight up).
+        // Dragaway takes the top-centre slot (index 0 = -90° = straight up).
         if showAIDrop { items.insert(.aiDrop, at: 0) }
         guard !items.isEmpty else { return false }   // nothing to show → fall back to pill
 
@@ -102,7 +110,30 @@ final class RadialLauncherController: ObservableObject {
         panel.contentView = drop
         panel.orderFrontRegardless()
         self.window = panel
+        startFailsafe()
+        NotificationCenter.default.post(name: .tutorialEvent, object: "radial")
         return true
+    }
+
+    /// See `failsafeTimer`. 0.1 s ticks; 3 consecutive button-up ticks (~0.3 s) leave
+    /// plenty of room for a normal drop's performDragOperation (which arrives within
+    /// milliseconds of release and cancels this via dismiss()).
+    private func startFailsafe() {
+        failsafeTimer?.invalidate()
+        buttonUpTicks = 0
+        let t = Timer(timeInterval: 0.1, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self, self.isActive else { return }
+                if NSEvent.pressedMouseButtons & 1 == 0 {
+                    self.buttonUpTicks += 1
+                    if self.buttonUpTicks >= 3 { self.dragEnded() }
+                } else {
+                    self.buttonUpTicks = 0
+                }
+            }
+        }
+        RunLoop.main.add(t, forMode: .common)
+        failsafeTimer = t
     }
 
     /// Live cursor update from the drag session. `screenPoint` is y-up screen coords.
@@ -154,7 +185,7 @@ final class RadialLauncherController: ObservableObject {
         dismiss()
     }
 
-    /// Open the file in AI Drop itself — drive the pill/chips flow via the AppDelegate
+    /// Open the file in Dragaway itself — drive the pill/chips flow via the AppDelegate
     /// (which reuses the same proven window bring-up as the Finder Quick Action).
     ///
     /// Routed through NotificationCenter (the app's standard AppDelegate channel) rather
@@ -174,6 +205,8 @@ final class RadialLauncherController: ObservableObject {
     }
 
     private func dismiss() {
+        failsafeTimer?.invalidate()
+        failsafeTimer = nil
         window?.orderOut(nil)
         window = nil
         highlighted = nil
@@ -348,7 +381,7 @@ private struct RadialMenuView: View {
         .ignoresSafeArea()
     }
 
-    /// One wheel slot: app icons stay icons; the AI Drop slot is a larger pill-shaped
+    /// One wheel slot: app icons stay icons; the Dragaway slot is a larger pill-shaped
     /// "Start Session" label (no icon) instead.
     @ViewBuilder
     private func marker(for item: RadialLauncherController.Item, selected: Bool) -> some View {

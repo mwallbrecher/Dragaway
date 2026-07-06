@@ -38,4 +38,22 @@ final class GroqProvider: AIProvider {
         let decoded = try JSONDecoder().decode(OpenAICompatibleResponse.self, from: data)
         return decoded.choices.first?.message.content ?? "No response"
     }
+
+    func replyStream(messages: [ChatTurn], imageURL: URL?, plan: RoutingPlan,
+                     onDelta: @escaping (String) -> Void) async throws -> String {
+        guard isAvailable else { throw AIError.noAPIKey(provider: name) }
+        var request = URLRequest(url: URL(string: baseURL)!)
+        request.httpMethod = "POST"
+        request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        let body: [String: Any] = [
+            "model": model,
+            "messages": openAICompatMessages(messages, imageURL: imageURL, attachImage: false),
+            "max_tokens": plan.maxOutputTokens,
+            "temperature": 0.3,
+            "stream": true
+        ]
+        request.httpBody = try JSONSerialization.data(withJSONObject: body)
+        return try await openAICompatSSE(request: request, onDelta: onDelta)
+    }
 }

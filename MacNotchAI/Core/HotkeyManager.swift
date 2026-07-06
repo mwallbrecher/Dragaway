@@ -54,7 +54,7 @@ final class HotkeyManager {
         set { UserDefaults.standard.set(newValue, forKey: radialEnabledKey) }
     }
 
-    /// Whether the radial wheel includes an "AI Drop" slot that routes the file into
+    /// Whether the radial wheel includes an "Dragaway" slot that routes the file into
     /// the pill/chips flow instead of an external app.
     var radialShowsAIDrop: Bool {
         get { UserDefaults.standard.object(forKey: radialShowsAIDropKey) as? Bool ?? true }
@@ -63,12 +63,13 @@ final class HotkeyManager {
 
     // MARK: - Radial launcher (second drag mode)
 
-    /// Modifier(s) that arm the radial launcher. Defaults to ⌃ Control. Empty set =
-    /// "no key" → the radial launcher becomes a default mode (see the drag router).
+    /// Modifier(s) that arm the radial launcher. Defaults to ⇧ Shift — Control clashes
+    /// with the Finder secondary-click / "more options" behaviour during a drag. Empty
+    /// set = "no key" → the radial launcher becomes a default mode (see the drag router).
     var radialModifiers: NSEvent.ModifierFlags {
         get {
             guard let raw = UserDefaults.standard.object(forKey: radialModifiersKey) as? Int else {
-                return .control
+                return .shift
             }
             return NSEvent.ModifierFlags(rawValue: UInt(bitPattern: raw))
         }

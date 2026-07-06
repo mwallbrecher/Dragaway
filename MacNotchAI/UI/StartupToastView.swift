@@ -25,7 +25,7 @@ final class StartupToastState: ObservableObject {
 
 // MARK: - View
 
-/// Compact "AI Drop is ready" banner that appears just below the notch for ~5 s.
+/// Compact "Dragaway is ready" banner that appears just below the notch for ~5 s.
 struct StartupToastView: View {
 
     @ObservedObject var state: StartupToastState
@@ -46,7 +46,7 @@ struct StartupToastView: View {
 
             // ── Text block ─────────────────────────────────────────────────
             VStack(alignment: .leading, spacing: 2) {
-                Text("AI Drop is ready")
+                Text("Dragaway is ready")
                     .font(.system(size: 12, weight: .semibold))
                     .foregroundColor(.white)
 

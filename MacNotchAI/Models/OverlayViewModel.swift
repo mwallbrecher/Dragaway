@@ -98,10 +98,19 @@ class OverlayViewModel: ObservableObject {
     /// title, or the assistant's Markdown answer); `modelText` is what is sent to the
     /// model for that turn (the action's system prompt, or the assistant's answer).
     struct ChatMessage: Identifiable, Hashable {
-        let id = UUID()
+        let id: UUID
         let role: ChatRole
         let display: String
         let modelText: String
+
+        // Explicit id so a streamed bubble can be UPDATED in place (same identity →
+        // SwiftUI diffs the text instead of recreating the row on every delta).
+        init(id: UUID = UUID(), role: ChatRole, display: String, modelText: String) {
+            self.id = id
+            self.role = role
+            self.display = display
+            self.modelText = modelText
+        }
     }
 
     /// The extracted document context, built once per session and reused for every
@@ -114,6 +123,53 @@ class OverlayViewModel: ObservableObject {
     }
 
     @Published var conversation: [ChatMessage] = []
+
+    // MARK: Streaming replies
+    //
+    // While a provider streams, deltas grow ONE assistant bubble in place (tracked by
+    // id). `finalizeStreamedReply` swaps in the definitive full text at the end;
+    // non-streaming providers never create the bubble, so the caller falls back to a
+    // plain append.
+    private var streamingMessageID: UUID?
+
+    /// Append a streamed text delta. First delta: leaves the loading/thinking state
+    /// and creates the assistant bubble (flipping to the result stage if needed).
+    func appendStreamDelta(_ delta: String, url: URL, action: AIAction) {
+        isAwaitingReply = false
+        if case .result = stage {} else {
+            withAnimation(.easeInOut(duration: 0.20)) {
+                stage = .result(url: url, action: action, text: "")
+            }
+        }
+        if let id = streamingMessageID,
+           let i = conversation.firstIndex(where: { $0.id == id }) {
+            let old = conversation[i]
+            conversation[i] = ChatMessage(id: old.id, role: .assistant,
+                                          display: old.display + delta, modelText: "")
+        } else {
+            let msg = ChatMessage(role: .assistant, display: delta, modelText: "")
+            streamingMessageID = msg.id
+            conversation.append(msg)
+        }
+    }
+
+    /// Replace the streamed bubble's text with the definitive full reply.
+    /// Returns false when no stream bubble exists (provider didn't stream) —
+    /// the caller appends a fresh message instead.
+    @discardableResult
+    func finalizeStreamedReply(_ full: String) -> Bool {
+        defer { streamingMessageID = nil }
+        guard let id = streamingMessageID,
+              let i = conversation.firstIndex(where: { $0.id == id }) else { return false }
+        let old = conversation[i]
+        conversation[i] = ChatMessage(id: old.id, role: .assistant,
+                                      display: full, modelText: full)
+        return true
+    }
+
+    /// Stream failed mid-flight: stop tracking the bubble (any partial text stays
+    /// visible; the error note is appended separately by the caller).
+    func abortStreamedReply() { streamingMessageID = nil }
     /// True while a follow-up turn is in flight (transcript already on screen). Drives
     /// the "Thinking…" row. The FIRST turn uses the .loading stage instead.
     @Published var isAwaitingReply = false
@@ -150,9 +206,6 @@ class OverlayViewModel: ObservableObject {
     // restore it via → without re-running the AI call. Cleared on fresh drop,
     // new action start, or full reset.
     @Published var cachedResult: Stage? = nil
-    // Drives the "Session opened in …" confirmation pill in stage 2.
-    // Set after handoff navigation, auto-cleared after 6 s.
-    @Published var handoffProviderName: String? = nil
 
     /// User-applied drag offset (screen coordinates: +x right, +y up) for the
     /// movable window. Applied on top of the notch-anchored origin in
@@ -304,7 +357,7 @@ class OverlayViewModel: ObservableObject {
     /// Open Stage 2 for a batch of dropped files in ONE session: the first supported
     /// file is the primary, the rest become additional session files. Unsupported
     /// files are skipped; if NONE are supported the stage routes to `.error`. Used by
-    /// multi-file drag-drop and the Finder "Add to AI Drop" Quick Action.
+    /// multi-file drag-drop and the Finder "Add to Dragaway" Quick Action.
     func setChips(urls: [URL]) {
         let supported = urls.filter { !FileInspector.isUnsupportedFileType($0) }
         guard let primary = supported.first else {
@@ -314,7 +367,7 @@ class OverlayViewModel: ObservableObject {
             hasMinimizedSession = false
             stage = .error(
                 url: urls.first ?? URL(fileURLWithPath: "/"),
-                message: "\"\(name)\" can't be analysed.\nAI Drop supports PDF, text, images, and code files.")
+                message: "\"\(name)\" can't be analysed.\nDragaway supports PDF, text, images, and code files.")
             return
         }
         let extras = Array(supported.dropFirst())
@@ -350,6 +403,9 @@ class OverlayViewModel: ObservableObject {
         Task.detached(priority: .userInitiated) {
             let signals = FileInspector.peekSignals(primary)
             await MainActor.run {
+                // Warm the main-actor peek cache so later synchronous
+                // suggestedActions() calls don't re-peek the file on the main thread.
+                FileInspector.seedPeekCache(for: primary, signals: signals)
                 guard case .chips(let u, let current) = OverlayViewModel.shared.stage,
                       u == primary else { return }
                 let reordered = FileInspector.smartReorder(base, primary: primary, signals: signals)
@@ -507,7 +563,6 @@ class OverlayViewModel: ObservableObject {
     func partialReset() {
         isDragHovering      = false
         isDraggingOut       = false
-        handoffProviderName = nil
         pendingDroppedURLs  = []
         jellyX              = 1.0
         jellyY              = 1.0
@@ -524,7 +579,6 @@ class OverlayViewModel: ObservableObject {
         isDraggingOut  = false
         customPrompt   = ""
         cachedResult        = nil
-        handoffProviderName = nil
         pendingDroppedURLs    = []
         additionalFileURLs    = []
         userDragOffset        = .zero

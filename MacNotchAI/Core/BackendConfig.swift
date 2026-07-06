@@ -4,7 +4,7 @@ import Foundation
 ///
 /// Everything here is intentionally empty until the Cloudflare Worker proxy and
 /// Paddle checkout are set up (see `tasks/todo.md` → Phase 2). While
-/// `proxyBaseURL == nil` the whole app stays in pure BYOK mode: the "AI Drop Free"
+/// `proxyBaseURL == nil` the whole app stays in pure BYOK mode: the "Dragaway Free"
 /// version and the Pro upgrade render as *locked / coming soon* and NEVER attempt a
 /// network call. The day the backend is live you only fill in the two URLs below —
 /// the locked affordances enable themselves via `isBackendLive`.

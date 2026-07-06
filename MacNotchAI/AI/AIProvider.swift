@@ -36,6 +36,79 @@ protocol AIProvider {
     /// provider honours the ceiling, and the hosted Worker also uses `tier` to pick the
     /// model. See docs/HOW_LLM_IS_CHOSEN.md §4–§5.
     func reply(messages: [ChatTurn], imageURL: URL?, plan: RoutingPlan) async throws -> String
+
+    /// Streaming variant: `onDelta` fires (on the main actor) for every text fragment
+    /// as it arrives; the full reply is returned at the end. Providers without a
+    /// streaming implementation fall back to `reply` (single delta-less completion),
+    /// so callers can use this unconditionally.
+    func replyStream(messages: [ChatTurn], imageURL: URL?, plan: RoutingPlan,
+                     onDelta: @escaping (String) -> Void) async throws -> String
+}
+
+extension AIProvider {
+    /// Default: no streaming — one shot via `reply`, no deltas.
+    func replyStream(messages: [ChatTurn], imageURL: URL?, plan: RoutingPlan,
+                     onDelta: @escaping (String) -> Void) async throws -> String {
+        try await reply(messages: messages, imageURL: imageURL, plan: plan)
+    }
+}
+
+// MARK: - Shared SSE streaming (OpenAI-compatible providers)
+
+/// POST `request` (whose body must include `"stream": true`) and consume the
+/// OpenAI-compatible SSE stream (`data: {...}` lines, `choices[0].delta.content`,
+/// terminated by `data: [DONE]`). Used by Groq, OpenAI, Gemini (OpenAI-compat
+/// endpoint), and Ollama. Returns the concatenated full text.
+func openAICompatSSE(request: URLRequest,
+                     onDelta: @escaping (String) -> Void) async throws -> String {
+    var request = request
+    // CRITICAL for visible streaming: URLSession advertises gzip by default, and its
+    // transparent decompression BUFFERS a compressed event stream until the response
+    // completes — every delta then arrives in one burst at the end (looks exactly like
+    // a non-streaming reply). Force identity so bytes flow through as they're sent.
+    request.setValue("text/event-stream", forHTTPHeaderField: "Accept")
+    request.setValue("identity", forHTTPHeaderField: "Accept-Encoding")
+
+    let (bytes, response) = try await URLSession.shared.bytes(for: request)
+    if let http = response as? HTTPURLResponse, http.statusCode != 200 {
+        var data = Data()
+        for try await b in bytes { data.append(b) }     // error bodies are small
+        throw AIError.apiError(data.apiErrorMessage() ?? "HTTP \(http.statusCode)")
+    }
+
+    struct Chunk: Decodable {
+        struct Choice: Decodable {
+            struct Delta: Decodable { let content: String? }
+            let delta: Delta?
+        }
+        let choices: [Choice]?
+    }
+
+    var full = ""
+    var deltas = 0
+    let t0 = Date()
+    var firstDeltaMs = -1
+    for try await line in bytes.lines {
+        guard line.hasPrefix("data:") else { continue }
+        let payload = line.dropFirst(5).trimmingCharacters(in: .whitespaces)
+        if payload == "[DONE]" { break }
+        guard let d = payload.data(using: .utf8),
+              let chunk = try? JSONDecoder().decode(Chunk.self, from: d),
+              let delta = chunk.choices?.first?.delta?.content, !delta.isEmpty
+        else { continue }
+        deltas += 1
+        if firstDeltaMs < 0 { firstDeltaMs = Int(Date().timeIntervalSince(t0) * 1000) }
+        full += delta
+        onDelta(delta)
+    }
+#if DEBUG
+    // Cadence check (Console filter: "[stream]"): many deltas spread over the total
+    // means live streaming; deltas ≈ total-time-bunched means something buffered.
+    NSLog("[stream] deltas=%d first=%dms total=%dms chars=%d",
+          deltas, firstDeltaMs, Int(Date().timeIntervalSince(t0) * 1000), full.count)
+#endif
+    guard !full.isEmpty else { throw AIError.apiError("Empty response") }
+    return full
 }
 
 // MARK: - Shared wire-format helpers (OpenAI-compatible providers)
@@ -142,7 +215,7 @@ extension AIProviderType {
 
     /// Model identifier + cost line shown as caption.
     ///
-    /// Typical AI Drop task ≈ 1,500 tokens in + 400 tokens out:
+    /// Typical Dragaway task ≈ 1,500 tokens in + 400 tokens out:
     ///   Groq / Llama 3.1 8B   → free tier available, ~10,000 interactions per $5
     ///   Claude Haiku 4.5      → ~385 interactions per $5
     ///   GPT-4o mini           → ~2,800 interactions per $5

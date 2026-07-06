@@ -128,7 +128,8 @@ class DragMonitor: ObservableObject {
         }
         lastDragChangeCount = count
 
-        let hasDrag = hasFile(on: pb)
+        // "Drag anything": files AND text selections / links / raw images wake the pill.
+        let hasDrag = hasDroppable(on: pb)
         if hasDrag, !isDraggingFile, !RadialLauncherController.shared.isActive {
             let hk = HotkeyManager.shared
 
@@ -188,7 +189,7 @@ class DragMonitor: ObservableObject {
             guard let self else { return }
             // Timer fires on the main runloop; MainActor.assumeIsolated is safe.
             MainActor.assumeIsolated {
-                if !self.hasFile(on: NSPasteboard(name: .drag)) {
+                if !self.hasDroppable(on: NSPasteboard(name: .drag)) {
                     self.isDraggingFile = false
                     self.stopPolling()
                 }
@@ -221,6 +222,12 @@ class DragMonitor: ObservableObject {
             return paths.map { URL(fileURLWithPath: $0) }
         }
         return []
+    }
+
+    /// Anything the pill can accept: real files, or a materializable payload
+    /// (text selection / web link / raw image — see DropMaterializer).
+    private func hasDroppable(on pasteboard: NSPasteboard) -> Bool {
+        hasFile(on: pasteboard) || DropMaterializer.hasPayload(on: pasteboard)
     }
 
     private func hasFile(on pasteboard: NSPasteboard) -> Bool {

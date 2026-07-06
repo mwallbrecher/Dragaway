@@ -9,6 +9,7 @@
 /* Begin PBXBuildFile section */
 		59D7920B2FCCD1D000A261BB /* Cocoa.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 59D7920A2FCCD1CF00A261BB /* Cocoa.framework */; };
 		59D792162FCCD1D000A261BB /* AddToAIDrop.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 59D792082FCCD1CF00A261BB /* AddToAIDrop.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		59F0A81D2FFAB93B00DBC473 /* Sparkle in Frameworks */ = {isa = PBXBuildFile; productRef = 59F0A81C2FFAB93B00DBC473 /* Sparkle */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -72,6 +73,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				59F0A81D2FFAB93B00DBC473 /* Sparkle in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -135,6 +137,7 @@
 			);
 			name = MacNotchAI;
 			packageProductDependencies = (
+				59F0A81C2FFAB93B00DBC473 /* Sparkle */,
 			);
 			productName = MacNotchAI;
 			productReference = 59114F5D2F699A5100E47DD9 /* MacNotchAI.app */;
@@ -189,6 +192,9 @@
 			);
 			mainGroup = 59114F542F699A5100E47DD9;
 			minimizedProjectReferenceProxies = 1;
+			packageReferences = (
+				59F0A81B2FFAB93B00DBC473 /* XCRemoteSwiftPackageReference "Sparkle" */,
+			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = 59114F5E2F699A5100E47DD9 /* Products */;
 			projectDirPath = "";
@@ -371,7 +377,7 @@
 				CODE_SIGN_ENTITLEMENTS = MacNotchAI/MacNotchAI.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 2;
+				CURRENT_PROJECT_VERSION = 3;
 				DEVELOPMENT_TEAM = ASN2KAJ266;
 				ENABLE_APP_SANDBOX = NO;
 				ENABLE_HARDENED_RUNTIME = YES;
@@ -382,11 +388,14 @@
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
 				INFOPLIST_KEY_NSMicrophoneUsageDescription = "AI Drop uses the microphone for speech-to-text so you can dictate prompts.";
 				INFOPLIST_KEY_NSSpeechRecognitionUsageDescription = "AI Drop uses speech recognition to convert your voice into text prompts.";
+				INFOPLIST_KEY_CFBundleDisplayName = Dragaway;
+				INFOPLIST_KEY_SUFeedURL = "https://raw.githubusercontent.com/mwallbrecher/Dragaway/main/appcast.xml";
+				INFOPLIST_KEY_SUPublicEDKey = "BOktIK1I9MB/+741Caw4opOxiX2oU1LUb4AN0UGlN6U=";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
-				MARKETING_VERSION = 1.0;
+				MARKETING_VERSION = 1.1;
 				PRODUCT_BUNDLE_IDENTIFIER = com.wallbrecher.MacNotchAI;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				STRING_CATALOG_GENERATE_SYMBOLS = YES;
@@ -406,7 +415,7 @@
 				CODE_SIGN_ENTITLEMENTS = MacNotchAI/MacNotchAI.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 2;
+				CURRENT_PROJECT_VERSION = 3;
 				DEVELOPMENT_TEAM = ASN2KAJ266;
 				ENABLE_APP_SANDBOX = NO;
 				ENABLE_HARDENED_RUNTIME = YES;
@@ -417,11 +426,14 @@
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
 				INFOPLIST_KEY_NSMicrophoneUsageDescription = "AI Drop uses the microphone for speech-to-text so you can dictate prompts.";
 				INFOPLIST_KEY_NSSpeechRecognitionUsageDescription = "AI Drop uses speech recognition to convert your voice into text prompts.";
+				INFOPLIST_KEY_CFBundleDisplayName = Dragaway;
+				INFOPLIST_KEY_SUFeedURL = "https://raw.githubusercontent.com/mwallbrecher/Dragaway/main/appcast.xml";
+				INFOPLIST_KEY_SUPublicEDKey = "BOktIK1I9MB/+741Caw4opOxiX2oU1LUb4AN0UGlN6U=";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
-				MARKETING_VERSION = 1.0;
+				MARKETING_VERSION = 1.1;
 				PRODUCT_BUNDLE_IDENTIFIER = com.wallbrecher.MacNotchAI;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				STRING_CATALOG_GENERATE_SYMBOLS = YES;
@@ -438,21 +450,21 @@
 			buildSettings = {
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 2;
+				CURRENT_PROJECT_VERSION = 3;
 				DEVELOPMENT_TEAM = ASN2KAJ266;
 				ENABLE_APP_SANDBOX = YES;
 				ENABLE_HARDENED_RUNTIME = YES;
 				ENABLE_USER_SELECTED_FILES = readonly;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = AddToAIDrop/Info.plist;
-				INFOPLIST_KEY_CFBundleDisplayName = "Add to AI Drop";
+				INFOPLIST_KEY_CFBundleDisplayName = "Add to Dragaway";
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 					"@executable_path/../../../../Frameworks",
 				);
-				MARKETING_VERSION = 1.0;
+				MARKETING_VERSION = 1.1;
 				PRODUCT_BUNDLE_IDENTIFIER = com.wallbrecher.MacNotchAI.AddToAIDrop;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SKIP_INSTALL = YES;
@@ -469,21 +481,21 @@
 			buildSettings = {
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 2;
+				CURRENT_PROJECT_VERSION = 3;
 				DEVELOPMENT_TEAM = ASN2KAJ266;
 				ENABLE_APP_SANDBOX = YES;
 				ENABLE_HARDENED_RUNTIME = YES;
 				ENABLE_USER_SELECTED_FILES = readonly;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = AddToAIDrop/Info.plist;
-				INFOPLIST_KEY_CFBundleDisplayName = "Add to AI Drop";
+				INFOPLIST_KEY_CFBundleDisplayName = "Add to Dragaway";
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 					"@executable_path/../../../../Frameworks",
 				);
-				MARKETING_VERSION = 1.0;
+				MARKETING_VERSION = 1.1;
 				PRODUCT_BUNDLE_IDENTIFIER = com.wallbrecher.MacNotchAI.AddToAIDrop;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SKIP_INSTALL = YES;
@@ -526,6 +538,25 @@
 			defaultConfigurationName = Release;
 		};
 /* End XCConfigurationList section */
+
+/* Begin XCRemoteSwiftPackageReference section */
+		59F0A81B2FFAB93B00DBC473 /* XCRemoteSwiftPackageReference "Sparkle" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/sparkle-project/Sparkle";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 2.9.4;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		59F0A81C2FFAB93B00DBC473 /* Sparkle */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 59F0A81B2FFAB93B00DBC473 /* XCRemoteSwiftPackageReference "Sparkle" */;
+			productName = Sparkle;
+		};
+/* End XCSwiftPackageProductDependency section */
 	};
 	rootObject = 59114F552F699A5100E47DD9 /* Project object */;
 }

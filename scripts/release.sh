@@ -14,7 +14,8 @@
 #   SKIP_NOTARIZE=1 scripts/release.sh # signed DMG only — for a GitHub pre-release.
 #                                      # Gatekeeper then needs `xattr -cr` on the DMG.
 #
-# Output: build/AIDrop-<version>.dmg
+# Output: build/Dragaway-<version>.dmg
+# (NOTARY_PROFILE below is your stored notarytool keychain profile name — leave as-is.)
 
 set -euo pipefail
 
@@ -67,14 +68,14 @@ echo "  exported: $APP_PATH"
 # Version for the DMG name (falls back to 0.0.0 if unreadable).
 VERSION="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' \
   "$APP_PATH/Contents/Info.plist" 2>/dev/null || echo 0.0.0)"
-DMG="$BUILD_DIR/AIDrop-$VERSION.dmg"
+DMG="$BUILD_DIR/Dragaway-$VERSION.dmg"
 
 echo "▸ 3/5  Building DMG…"
 rm -rf "$STAGE_DIR"
 mkdir -p "$STAGE_DIR"
 cp -R "$APP_PATH" "$STAGE_DIR/"
 ln -s /Applications "$STAGE_DIR/Applications"
-hdiutil create -volname "AI Drop" \
+hdiutil create -volname "Dragaway" \
   -srcfolder "$STAGE_DIR" -ov -format UDZO "$DMG" >/dev/null
 echo "  created: $DMG"
 
@@ -90,10 +91,35 @@ echo "▸ 4/5  Notarizing (this can take a few minutes)…"
 xcrun notarytool submit "$DMG" \
   --keychain-profile "$NOTARY_PROFILE" --wait
 
-echo "▸ 5/5  Stapling…"
+echo "▸ 5/6  Stapling…"
 xcrun stapler staple "$DMG"
 xcrun stapler validate "$DMG"
+
+# ── Sparkle appcast (auto-update feed) ───────────────────────────────────────
+# Signs the notarized DMG with the EdDSA private key (in your login Keychain, from
+# `generate_keys` — see SPARKLE_SETUP.md) and (re)generates appcast.xml. The DMG is
+# hosted as a GitHub Release asset, so the enclosure URL points there.
+echo "▸ 6/6  Sparkle appcast…"
+GEN_APPCAST="${SPARKLE_BIN:-}"
+if [[ -z "$GEN_APPCAST" ]]; then
+  GEN_APPCAST="$(/usr/bin/find ~/Library/Developer/Xcode/DerivedData \
+      -type f -name generate_appcast -path '*/Sparkle/*' -print -quit 2>/dev/null || true)"
+fi
+DL_PREFIX="https://github.com/mwallbrecher/Dragaway/releases/download/v$VERSION/"
+if [[ -n "$GEN_APPCAST" && -x "$GEN_APPCAST" ]]; then
+  # generate_appcast reads every archive in BUILD_DIR, signs it, and writes appcast.xml.
+  "$GEN_APPCAST" --download-url-prefix "$DL_PREFIX" -o "$REPO_ROOT/appcast.xml" "$BUILD_DIR"
+  echo "  wrote: $REPO_ROOT/appcast.xml"
+else
+  echo "  ⚠ generate_appcast not found — set SPARKLE_BIN or add the Sparkle package first."
+  echo "    Manual: <sparkle>/bin/generate_appcast --download-url-prefix '$DL_PREFIX' -o appcast.xml '$BUILD_DIR'"
+fi
 
 echo
 echo "✓ Done: $DMG"
 echo "  Verify on a clean Mac: right-click → Open should show no Gatekeeper warning."
+echo
+echo "  Ship the update:"
+echo "   1. Upload $DMG as an asset on the GitHub release tagged v$VERSION."
+echo "   2. Commit & push the updated appcast.xml to main."
+echo "   Installed apps then see the update within ~6h (or via Check for Updates…)."

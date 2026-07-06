@@ -145,6 +145,7 @@ final class FavoriteToolsStore: ObservableObject {
     /// plain `NSWorkspace.open`, no security-scoped bookmark needed.
     func launch(_ tool: FavoriteTool, with urls: [URL]) {
         guard !urls.isEmpty else { return }
+        NotificationCenter.default.post(name: .tutorialEvent, object: "toolLaunched")
 
         // Collapse the session to its compact pill so it tucks out of the way once the
         // file is handed off. Deferred one runloop tick inside `withAnimation` per the
@@ -159,7 +160,7 @@ final class FavoriteToolsStore: ObservableObject {
         config.activates = true
         NSWorkspace.shared.open(urls, withApplicationAt: tool.url, configuration: config) { app, error in
             if let error {
-                NSLog("AI Drop: could not open in \(tool.name): \(error.localizedDescription)")
+                NSLog("Dragaway: could not open in \(tool.name): \(error.localizedDescription)")
                 return
             }
             // `config.activates` only raises the app on a *fresh* launch; an already-running

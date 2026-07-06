@@ -7,6 +7,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var overlayWindow: OverlayWindow?
     private var onboardingWindow: NSWindow?
     private var hotkeyPickerWindow: NSWindow?
+    private var sessionSearchWindow: NSWindow?
+    private var feedbackWindow: NSWindow?
+    private var tutorialWindow: NSWindow?
     private var settingsWindow: NSWindow?
     private var startupToastWindow: NSPanel?
     private var statusItem: NSStatusItem?         // menu-bar icon (replaces MenuBarExtra)
@@ -21,6 +24,8 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     /// the keystroke so the combo never leaks into the frontmost app. Live only while
     /// clipboard tracking is enabled.
     private let clipboardHotkey = GlobalHotkey()
+    /// ⌃⌘N — open a new session from the current clipboard (text / image / files).
+    private let sessionHotkey = GlobalHotkey()
 
     // ── Dismiss-race protection ───────────────────────────────────────────────
     // When hideOverlay() fires, dismissAnimated() starts a 0.14 s alpha fade.
@@ -54,12 +59,36 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         prewarmSwiftUI()
         setupStatusItem()
 
+        // Auto-update (Sparkle). Instantiating starts the scheduled background check.
+        _ = UpdaterController.shared
+
         // Clipboard history: poll the pasteboard + arm the ⌃⌘V picker hotkey (both gated
         // on the "Track Clipboard" toggle, default on).
         if ClipboardHistoryStore.isEnabled {
             ClipboardHistoryStore.shared.startMonitoring()
             registerClipboardHotkey()
         }
+
+        // First-run tour: once onboarding is done, show the interactive tutorial once.
+        // Restartable anytime from Settings → Help (fresh installs get it right after
+        // onboarding via the .showTutorial post in OnboardingView).
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(handleShowTutorial),
+            name: .showTutorial, object: nil
+        )
+        if UserDefaults.standard.bool(forKey: "hasCompletedOnboarding"),
+           !UserDefaults.standard.bool(forKey: "tutorialShown") {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
+                self?.showTutorial()
+            }
+        }
+
+        // Capture features: ⌃⌘N clipboard→session hotkey + screenshot→session watcher.
+        armCaptureFeatures()
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(handleCaptureSettingsChanged),
+            name: .captureSettingsChanged, object: nil
+        )
 
         NotificationCenter.default.addObserver(
             self, selector: #selector(handleShowOnboarding),
@@ -94,14 +123,14 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             name: .showScripts, object: nil
         )
 
-        // Finder "Add to AI Drop" Quick Action → opens Stage 2 with the selected files.
+        // Finder "Add to Dragaway" Quick Action → opens Stage 2 with the selected files.
         NotificationCenter.default.addObserver(
             self, selector: #selector(handleAddFilesFromShare),
             name: .addFilesFromShare, object: nil
         )
         registerShareInboxObserver()
 
-        // Radial launcher "AI Drop" slot / pill-approach handoff → open the chips card.
+        // Radial launcher "Dragaway" slot / pill-approach handoff → open the chips card.
         NotificationCenter.default.addObserver(
             self, selector: #selector(handleRadialOpenSession(_:)),
             name: .radialOpenSession, object: nil
@@ -130,7 +159,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             }
         }
 
-        // Brief startup toast — let the user know AI Drop is alive and ready.
+        // Brief startup toast — let the user know Dragaway is alive and ready.
         // Skip on the very first launch (onboarding already greets them).
         if UserDefaults.standard.bool(forKey: "hasCompletedOnboarding") {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.55) {
@@ -148,7 +177,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     @objc private func handleShowOutputDirectory() { showSettings(section: .outputDirectory) }
     @objc private func handleShowScripts() { showSettings(section: .scripts) }
 
-    // MARK: - Finder "Add to AI Drop" Quick Action
+    // MARK: - Finder "Add to Dragaway" Quick Action
 
     /// Subscribe to the Darwin notification the (sandboxed) extension posts after it
     /// writes the selected paths into the shared App Group inbox. Darwin notifications
@@ -252,7 +281,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private func setupStatusItem() {
         let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
         if let button = item.button {
-            button.image = NSImage(systemSymbolName: "sparkles", accessibilityDescription: "AI Drop")
+            button.image = NSImage(systemSymbolName: "sparkles", accessibilityDescription: "Dragaway")
             button.image?.isTemplate = true     // adapts to light/dark menu bar
             button.target = self
             button.action = #selector(statusItemClicked(_:))
@@ -353,9 +382,15 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             : "Add Hotkey…"
         addItem(to: menu, title: hotkeyTitle, action: #selector(menuHotkey))
 
+        let updateItem = addItem(to: menu, title: "Check for Updates…", action: #selector(menuCheckUpdates))
+        updateItem.isEnabled = UpdaterController.shared.canCheckForUpdates
+
+        addItem(to: menu, title: "Help & Tutorial…", action: #selector(menuHelp))
+        addItem(to: menu, title: "Send Feedback…", action: #selector(menuFeedback))
+
         menu.addItem(.separator())
 
-        addItem(to: menu, title: "Quit AI Drop", action: #selector(menuQuit), key: "q")
+        addItem(to: menu, title: "Quit Dragaway", action: #selector(menuQuit), key: "q")
         return menu
     }
 
@@ -371,6 +406,10 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             addInfoItem(to: menu, title: "No recent sessions")
             return menu
         }
+
+        // Full-text search across all stored sessions (filenames, prompts, answers).
+        addItem(to: menu, title: "Search Sessions…", action: #selector(menuSearchSessions))
+        menu.addItem(.separator())
 
         let df = DateFormatter()
         df.dateFormat = "dd.MM.yy, HH:mm"
@@ -448,6 +487,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         track.target = self
         track.state = ClipboardHistoryStore.isEnabled ? .on : .off
         menu.addItem(track)
+
+        // Screenshot→session / ⌃⌘N settings live in their own Settings section.
+        addItem(to: menu, title: "Capture Settings…", action: #selector(menuCaptureSettings))
         menu.addItem(.separator())
 
         let items = ClipboardHistoryStore.shared.items
@@ -522,8 +564,8 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private func tierLabel() -> String {
         switch EntitlementStore.shared.tier {
         case .byok:       return "Your own key"
-        case .freeHosted: return "AI Drop Free"
-        case .pro:        return "AI Drop Pro"
+        case .freeHosted: return "Dragaway Free"
+        case .pro:        return "Dragaway Pro"
         }
     }
 
@@ -541,14 +583,14 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
         if u.inTrial {
             guard let left = u.trialRemaining else { return nil }
-            title = "AI Drop Free · Trial"
+            title = "Dragaway Free · Trial"
             subtitle = "\(max(0, left)) free interactions left"
             progress = nil
         } else {
             guard let rem = u.dailyTokensRemaining,
                   let budget = u.dailyTokenBudget, budget > 0 else { return nil }
             let pctFree = max(0, min(100, Int((Double(rem) / Double(budget) * 100).rounded())))
-            title = "AI Drop Free · Today"
+            title = "Dragaway Free · Today"
             subtitle = "\(pctFree)% left · \(Self.tokenFmt(rem)) / \(Self.tokenFmt(budget)) tokens"
             progress = min(1, max(0, Double(budget - rem) / Double(budget)))
         }
@@ -629,6 +671,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
     @objc private func menuDisableCustom() { NotificationCenter.default.post(name: .showCustomDisable, object: nil) }
     @objc private func menuHotkey()        { NotificationCenter.default.post(name: .showHotkeyPicker, object: nil) }
+    @objc private func menuCheckUpdates()  { UpdaterController.shared.checkForUpdates() }
     @objc private func menuQuit()          { NSApp.terminate(nil) }
 
     // MARK: Recent-sessions actions
@@ -637,8 +680,13 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     /// result (prior turn cached for the back-arrow) and reuse the restore path.
     @objc private func menuOpenHistorySession(_ sender: NSMenuItem) {
         guard let idStr = sender.representedObject as? String,
-              let id = UUID(uuidString: idStr),
-              let rec = SessionHistoryStore.shared.record(for: id),
+              let id = UUID(uuidString: idStr) else { return }
+        openHistorySession(id: id)
+    }
+
+    /// Reopen a stored session (menu row + the Search Sessions window both land here).
+    func openHistorySession(id: UUID) {
+        guard let rec = SessionHistoryStore.shared.record(for: id),
               let last = rec.lastTurn else { return }
 
         let primary = rec.fileURL
@@ -695,6 +743,48 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     @objc private func menuClearHistory() {
         guard confirmDestructive(title: "Clear Session History?") else { return }
         SessionHistoryStore.shared.clear()
+    }
+
+    @objc private func menuSearchSessions() { showSessionSearch() }
+    @objc private func menuFeedback()       { showFeedback() }
+
+    /// Open (or re-focus) the Feedback window. Same managed-NSWindow pattern as the
+    /// hotkey picker / session search.
+    func showFeedback() {
+        if feedbackWindow == nil {
+            let hosting = NSHostingController(rootView: FeedbackView { [weak self] in
+                self?.feedbackWindow?.close()
+                self?.feedbackWindow = nil
+            })
+            let win = NSWindow(contentViewController: hosting)
+            win.title = "Send Feedback"
+            win.styleMask = [.titled, .closable]
+            win.isReleasedWhenClosed = false
+            win.center()
+            feedbackWindow = win
+        }
+        feedbackWindow?.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
+    }
+
+    /// Open (or re-focus) the Search Sessions window. Same managed-NSWindow pattern
+    /// as showHotkeyPicker. Picking a row closes the window and restores the session.
+    func showSessionSearch() {
+        if sessionSearchWindow == nil {
+            let hosting = NSHostingController(rootView: SessionSearchView { [weak self] id in
+                self?.sessionSearchWindow?.close()
+                self?.sessionSearchWindow = nil
+                self?.openHistorySession(id: id)
+            })
+            let win = NSWindow(contentViewController: hosting)
+            win.title = "Search Sessions"
+            win.styleMask = [.titled, .closable]
+            win.isReleasedWhenClosed = false
+            win.center()
+            sessionSearchWindow = win
+        }
+        sessionSearchWindow?.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
     }
 
     // MARK: Clipboard-history actions
@@ -977,9 +1067,82 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     /// Arm the global ⌃⌘V hotkey → toggle the clipboard picker. Carbon `RegisterEventHotKey`
     /// consumes the keystroke (no leak to the frontmost app) and needs no Accessibility.
+    // MARK: - Capture features (⌃⌘N + screenshot watcher)
+
+    /// Whether the ⌃⌘N clipboard→session hotkey is armed (Settings toggle, default on).
+    static var clipboardSessionHotkeyEnabled: Bool {
+        get { UserDefaults.standard.object(forKey: "clipboardSessionHotkeyEnabled") as? Bool ?? true }
+        set { UserDefaults.standard.set(newValue, forKey: "clipboardSessionHotkeyEnabled") }
+    }
+
+    @objc private func handleCaptureSettingsChanged() { armCaptureFeatures() }
+
+    /// (Re)arm both capture features from their persisted toggles. Idempotent.
+    private func armCaptureFeatures() {
+        if Self.clipboardSessionHotkeyEnabled {
+            sessionHotkey.register(keyCode: UInt32(kVK_ANSI_N),
+                                   modifiers: UInt32(cmdKey | controlKey)) { [weak self] in
+                self?.openSessionFromClipboard()
+            }
+        } else {
+            sessionHotkey.unregister()
+        }
+
+        if ScreenshotWatcher.isEnabled {
+            ScreenshotWatcher.shared.start()
+        } else {
+            ScreenshotWatcher.shared.stop()
+        }
+    }
+
+    /// ⌃⌘N: open a session from whatever the clipboard holds — copied files directly,
+    /// anything else (text / link / image) through the same materializer the
+    /// drag-anything pipeline uses. Beeps when the clipboard has nothing usable.
+    private func openSessionFromClipboard() {
+        let pb = NSPasteboard.general
+        var urls = (pb.readObjects(forClasses: [NSURL.self],
+                                   options: [.urlReadingFileURLsOnly: true]) as? [URL]) ?? []
+        if urls.isEmpty,
+           let payload = DropMaterializer.capture(from: pb),
+           let materialized = DropMaterializer.materialize(payload) {
+            urls = [materialized]
+        }
+        guard !urls.isEmpty else { NSSound.beep(); return }
+        NotificationCenter.default.post(name: .tutorialEvent, object: "clipboard")
+        openSessionWithFiles(urls)
+    }
+
+    @objc private func menuCaptureSettings() { showSettings(section: .clipboard) }
+    @objc private func menuHelp()            { showSettings(section: .help) }
+    @objc private func handleShowTutorial()  { showTutorial() }
+
+    /// Open (or re-focus) the interactive tutorial. Floating so it stays visible while
+    /// the user tries the real actions (drops, hotkeys, the radial) beside it.
+    func showTutorial() {
+        if tutorialWindow == nil {
+            let controller = TutorialController()
+            controller.onExit = { [weak self] in
+                self?.tutorialWindow?.close()
+                self?.tutorialWindow = nil
+            }
+            let win = NSWindow(contentViewController:
+                NSHostingController(rootView: TutorialView(controller: controller)))
+            win.title = "Welcome to Dragaway"
+            win.styleMask = [.titled, .closable]
+            win.isReleasedWhenClosed = false
+            win.level = .floating
+            win.center()
+            controller.window = win
+            tutorialWindow = win
+        }
+        tutorialWindow?.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
+    }
+
     private func registerClipboardHotkey() {
         clipboardHotkey.register(keyCode: UInt32(kVK_ANSI_V),
                                  modifiers: UInt32(cmdKey | controlKey)) {
+            NotificationCenter.default.post(name: .tutorialEvent, object: "clipboard")
             ClipboardPicker.shared.toggle()
         }
     }
@@ -1088,7 +1251,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     // MARK: - Startup toast
 
-    /// Shows a compact "AI Drop is ready" banner just below the notch for 5 s,
+    /// Shows a compact "Dragaway is ready" banner just below the notch for 5 s,
     /// then spring-fades it out. Called on every launch after onboarding is done.
     private func showStartupToast() {
         guard startupToastWindow == nil else { return }
@@ -1191,7 +1354,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         startDismissMonitors()
     }
 
-    /// Radial launcher "AI Drop" slot / pill-approach handoff → open the chips card for
+    /// Radial launcher "Dragaway" slot / pill-approach handoff → open the chips card for
     /// the dragged file(s). Reuses the same proven path as the Finder Quick Action.
     @objc private func handleRadialOpenSession(_ note: Notification) {
         guard let urls = note.object as? [URL], !urls.isEmpty else { return }
@@ -1453,6 +1616,8 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         case .outputDirectory: h = 360
         case .scripts:         h = 560
         case .aiProvider:      h = 480
+        case .clipboard:       h = 320
+        case .help:            h = 520
         }
         return NSSize(width: 460, height: h)
     }
@@ -1480,7 +1645,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     func showCustomDisable() {
         let alert = NSAlert()
-        alert.messageText     = "Disable AI Drop for…"
+        alert.messageText     = "Disable Dragaway for…"
         alert.informativeText = "Enter a duration in minutes (e.g. 45)."
         alert.addButton(withTitle: "Disable")
         alert.addButton(withTitle: "Cancel")
@@ -1509,7 +1674,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 self.onboardingWindow = nil
             })
             let win = NSWindow(contentViewController: hosting)
-            win.title = "Welcome to AI Drop"
+            win.title = "Welcome to Dragaway"
             win.styleMask = [.titled, .closable]
             win.isReleasedWhenClosed = false
             win.center()
@@ -1531,7 +1696,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private func showAccessibilityOnboarding() {
         let alert = NSAlert()
         alert.messageText     = "One permission needed"
-        alert.informativeText = "AI Drop needs Accessibility access to detect when you drag files.\n\nOpen System Settings → Privacy & Security → Accessibility and enable AI Drop."
+        alert.informativeText = "Dragaway needs Accessibility access to detect when you drag files.\n\nOpen System Settings → Privacy & Security → Accessibility and enable Dragaway."
         alert.addButton(withTitle: "Open System Settings")
         alert.addButton(withTitle: "Later")
         if alert.runModal() == .alertFirstButtonReturn {
@@ -1555,6 +1720,10 @@ extension Notification.Name {
     static let showScripts          = Notification.Name("com.aidrop.showScripts")
     static let addFilesFromShare = Notification.Name("com.aidrop.addFilesFromShare")
     static let radialOpenSession = Notification.Name("com.aidrop.radialOpenSession")
+    static let captureSettingsChanged = Notification.Name("com.aidrop.captureSettingsChanged")
+    static let showTutorial  = Notification.Name("com.aidrop.showTutorial")
+    /// Feature-usage pings for the interactive tutorial (object = TutorialStep.Trigger raw).
+    static let tutorialEvent = Notification.Name("com.aidrop.tutorialEvent")
 }
 
 // MARK: - Provider resolution

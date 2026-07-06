@@ -12,11 +12,11 @@ enum HostedError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .backendNotConfigured:
-            return "AI Drop Free isn't available yet. Switch to your own API key in Settings."
+            return "Dragaway Free isn't available yet. Switch to your own API key in Settings."
         case .limitReached:
             return "You've used today's free interactions. Try again tomorrow or use your own API key."
         case .serviceBusy:
-            return "AI Drop Free is busy right now. Try again later or use your own API key."
+            return "Dragaway Free is busy right now. Try again later or use your own API key."
         }
     }
 }
@@ -26,7 +26,7 @@ enum HostedError: LocalizedError {
 /// authenticates the device with an anonymous `X-Device-Id`. Every response carries a
 /// fresh usage snapshot which we mirror into `UsageStore`.
 final class HostedProvider: AIProvider {
-    let name = "AI Drop Free"
+    let name = "Dragaway Free"
 
     /// Only usable once the Worker URL has been configured.
     var isAvailable: Bool { BackendConfig.proxyBaseURL != nil }

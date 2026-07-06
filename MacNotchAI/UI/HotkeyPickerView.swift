@@ -98,7 +98,7 @@ struct HotkeyPickerView: View {
                         ModifierToggle(symbol: "⌘", label: "Command",
                                        flag: .command, selection: $radialMods)
                     }
-                    Toggle("Show AI Drop in Launcher", isOn: $showAIDrop)
+                    Toggle("Show Dragaway in Launcher", isOn: $showAIDrop)
                 }
                 .disabled(!radialEnabled)
                 .opacity(radialEnabled ? 1 : 0.4)

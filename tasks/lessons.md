@@ -465,3 +465,161 @@
 - **Rule:** structure from font SIZE (trustworthy) + emphasis from font NAME/weight (traits lie). Tables
   are out of reach locally — degrade to paragraphs. Validate PDF heuristics with a real top-down PDF, not
   a flipped-context synthetic one.
+
+### [WEB-01] Decorative overflow layers can steal clicks from controls outside the demo viewport
+- **What was wrong:** moving the website's file-type controls above the AI Drop demo rendered correctly,
+  but Playwright clicks did nothing. The `.sim .backdrop` / `.scrim` layers use large negative insets
+  and `overflow: visible`, so they visually/physically extended over the new toggle and intercepted
+  pointer events.
+- **Why:** visual background layers are still hit-testable unless explicitly disabled. A control can look
+  unobstructed while an invisible absolute child from a later sibling sits above it in the hit-test stack.
+- **Fix:** give the external toggle a positioned z-index and set `pointer-events: none` on decorative
+  `.backdrop` / `.scrim` layers.
+- **Rule:** when a demo viewport intentionally lets decorative absolute layers bleed outside its box,
+  make those layers non-interactive or explicitly stack nearby controls above them before trusting visual
+  placement.
+
+### [WEB-02] Idle replay hover guards need a coordinate fallback
+- **What was wrong:** the AI Drop website demo paused correctly when the cursor entered the demo area,
+  but a leave-only implementation was brittle during verification and could leave the idle replay timer
+  cancelled if the pointer transition was missed.
+- **Why:** `pointerenter`/`pointerleave` are fine for normal UI, but animated hero surfaces with transparent
+  layers, browser automation, and viewport edges can make hover state hard to observe and easy to miss.
+- **Fix:** keep the direct enter/leave listeners, but also listen for document pointer movement and compare
+  `clientX/clientY` against the live `.sim-col` bounds. Treat document/window leave or blur as not hovered.
+- **Rule:** when hover state controls a timer, maintain it from both boundary events and coordinates; always
+  have an explicit "outside the document/window" path that resumes the timer.
+
+### [WEB-03] Large scrollable lists should animate as one block, not one fill per row
+- **What was wrong:** after expanding the AI Drop website demo from 7-ish actions to the full catalogue,
+  each action was still wrapped in its own `.fill`. The hero choreography had to reveal many more rows
+  than there were orbit arrivals, making the card animation feel broken once the list height was capped.
+- **Why:** `.fill` is a structural animation primitive for major card sections, not for unbounded list
+  items. A scroll container with many animated children fights the fixed max-height and delays later
+  sections such as Open-in and the prompt.
+- **Fix:** wrap `.ph-tabcontent` itself in a single `.fill`, and render the full catalogue as `.ph-chip`
+  children inside that scrollbox. Only the first bounded visible set (seven rows in the website hero)
+  gets a lightweight `.ph-chip--pop`; rows after that are skipped so the Open-in launcher can animate.
+  Keep the old window metrics with a baseline visible-row count, while `scrollHeight` carries the full
+  catalogue.
+- **Rule:** when a demo card contains a scrollable list, animate the scrollbox once and populate it with
+  normal rows. Per-row reveal is okay only for a short visible subset; never wrap an unbounded list in
+  one `.fill` per row.
+
+### [WEB-04] Version touched static assets when verifying local website animation changes
+- **What was wrong:** the website preview picked up the updated `app.js` markup for the prompt mic button,
+  but kept an older `icons.js`, so the new `mic` symbol hydrated as the generic fallback dot.
+- **Why:** changing the page URL query string does not necessarily invalidate separate static assets whose
+  script/style URLs stay unchanged.
+- **Fix:** add a matching query version to the touched CSS/JS asset URLs in `index.html` before browser
+  verification, then load the preview with a fresh page URL.
+- **Rule:** for static demos served by a simple local server, cache-bust every touched asset, not just the
+  page URL, before trusting browser evidence.
+
+### [WEB-05] Keep curated hero actions separate from the exhaustive feature grid
+- **What was wrong:** the AI Drop hero demo had been switched to derive all chip rows only from the lower
+  `fileTypes[].does` catalogue. That dropped older curated demo options such as "Find trends" and mixed
+  generic utility actions like "Show in Finder" into the hero.
+- **Why:** the feature grid is an exhaustive catalogue, while the hero card needs a curated, product-demo
+  set that can include narrative options not listed in the bottom grid.
+- **Fix:** restore `pill.tabRows` as hero-only seed data from the website backup, merge it before the
+  catalogue-derived rows, dedupe by action label, and keep unwanted generic fallback rows out of `any`.
+- **Rule:** do not make the hero action list depend solely on the lower feature-grid catalogue; preserve a
+  hero-only action layer for curated examples and merge it deliberately.
+
+### [WEB-06] Re-hydrating a single icon element requires replacing that element's inner SVG
+- **What was wrong:** the website's cursor-attached file ghost changed its `data-icon` per file type, but
+  the visible SVG disappeared and the file thumbnail looked like an empty gray surface.
+- **Why:** `SFIcons.hydrate(root)` scans descendants with `[data-icon]`; when called with the icon element
+  itself as `root`, it does not hydrate that root node. Clearing `innerHTML` before that call removed the
+  prior SVG and inserted nothing.
+- **Fix:** for single-element updates, set `icon.innerHTML = SF.svg(file.icon, ...)` directly and update
+  `data-icon` / `data-icon-done`. Use `SF.hydrate(container)` only when the target icons are descendants
+  of the passed container.
+- **Rule:** know whether a hydrator includes the root element or only queries descendants before using it
+  for dynamic updates; if it is descendant-only, update the single icon directly.
+
+### [WEB-07] Retiming one property in a combined WAAPI animation can require splitting timelines
+- **What was wrong:** delaying the cursor/file fade by changing keyframe offsets inside the existing
+  transform+opacity animation still made the fade visually coincide with the pill expansion.
+- **Why:** the animation used a global cubic-bezier easing. That easing remapped the whole animation's
+  progress, so offset math alone did not preserve absolute millisecond timing for the opacity segment.
+- **Fix:** keep the transform keyframes on their original eased timeline, but move opacity to a separate
+  linear WAAPI animation with its own `VANISH` end time.
+- **Rule:** when a website demo needs one property to hit an exact timestamp, split that property into its
+  own animation instead of relying on offsets inside a globally eased multi-property animation.
+
+### [WEB-08] Smooth auto-height morphs by tracking layout height, not transformed bounds
+- **What was wrong:** smoothing the website pill-to-card morph with a fixed start height worked, but using
+  `getBoundingClientRect().height` for follow-up height updates picked up the liquid scale transform and
+  made the target height bounce.
+- **Why:** transformed bounds are visual bounds. During squash/stretch keyframes they are not the same as
+  the element's layout height, so feeding them back into `style.height` couples the distortion to layout.
+- **Fix:** use `offsetHeight`/`scrollHeight` from the card content, update the outer pill height
+  monotonically while rows fill in, then release the inline height after the choreography finishes.
+- **Rule:** when animating a container's height while separately animating transform distortion, measure
+  layout height only; never feed transformed visual bounds back into layout.
+
+### [WEB-09] Delay a sub-animation inside its own curve, not by shifting shared timeline beats
+- **What was wrong:** an 80 ms delay request for the orbit radius expansion was implemented by moving the
+  shared `EXPAND` / `VANISH` / `FILL_START` beats, which retimed the pill/card morph instead of only the
+  radius pre-ramp.
+- **Why:** those constants coordinate multiple choreography tracks. Moving them changes the visible drop,
+  vanish and fill sequence even when the desired change is limited to one visual property.
+- **Fix:** restore the shared beats and add a dedicated radius hold window before the 0.9 → 1.2 pre-ramp.
+- **Rule:** for local timing polish, add timing state to the local property curve first. Only move global
+  timeline constants when the whole choreography beat is intentionally changing.
+
+### [WEB-10] Cancel fill-forwards WAAPI animations before reusing the same DOM element
+- **What was wrong:** a replay prelude faded out the existing pill with a `fill: "forwards"` animation,
+  then reused the same `#pill` element for the next waiting/card state.
+- **Why:** a completed WAAPI animation still owns the animated property while its forwards fill is active.
+  Reassigning classes or inner HTML does not automatically release that opacity/transform override.
+- **Fix:** cancel the pill's completed animations immediately after the fade and before rebuilding the next
+  state. Do it in the same task as the reset so there is no visible flash back to the old card.
+- **Rule:** if a static website demo reuses a DOM node after a one-off WAAPI transition, cancel that node's
+  fill-forwards animations before relying on CSS classes for the next state.
+
+### [WEB-11] Keep prelude-only motion from advancing the next choreography's property curve
+- **What was wrong:** the replay prelude made tools rotate while popping in, but the helper also advanced
+  the orbit radius curve. When the normal choreography started, the chips snapped back to the initial
+  0.9 radius.
+- **Why:** the handoff intentionally carried the spin phase into the next loop, but reused the same `t`
+  for radius. Spin phase should continue; the local radius pre-ramp should still start at frame 0.
+- **Fix:** during the replay pop-in, sample the orbit transform with a fixed radius time and only advance
+  the spin offset. Pass that spin offset into the normal choreography.
+- **Rule:** when stitching two WAAPI timelines, carry forward only the property state that should be
+  continuous. Pin every other property to the receiving timeline's expected start value.
+
+### [WEB-12] Split positional transforms from visible tile styling before pop-in effects
+- **What was wrong:** separating the orbit transform from the icon pop removed the loop hitch, but left
+  the glass tool tiles visible from the start because the background still lived on the rotating outer
+  `.orbit-chip`.
+- **Why:** the outer element had to remain present and rotating for a smooth handoff. Any visible styling
+  on that element shows immediately, even if the logo/content child is hidden.
+- **Fix:** keep `.orbit-chip` as the invisible positioning/rotation layer and move the glass background,
+  stroke, shadow, and content into an inner `.orbit-chip__shell`. Pop the shell, not just the logo.
+- **Rule:** for animated orbit items, reserve the outer node for position-only transforms. Put visible
+  tile styling on an inner node when the whole tile needs an independent reveal animation.
+
+### [WEB-13] Preserve animated progress by freezing computed pseudo-element state
+- **What was wrong:** the website file-type toggle progress looked like a late shine instead of an
+  actual timer, and hover cancelled the replay by removing the progress class, which reset the fill.
+- **Why:** the progress animation used an eased keyframe curve with most visual growth near the end, and
+  the CSS pseudo-element state was not stored anywhere when the timer was cancelled.
+- **Fix:** make the thumb progress transform linear from the start, freeze the computed `::after`
+  scale/opacity/filter into CSS variables on hover, and resume the remaining timeout from that stored
+  progress.
+- **Rule:** if a CSS animation is meant to communicate elapsed time, keep its progress property linear
+  and persist the computed state before pausing or cancelling it.
+
+### [WEB-14] Add boot preludes with a local offset instead of rewriting shared beats
+- **What was wrong:** adding an initial tool/letter pop could have been done by moving `T.APPEAR`,
+  `T.PILL_APPEAR`, `T.EXPAND`, and the fill timings directly.
+- **Why:** those constants define the established drag/drop/morph choreography and are reused by replay
+  paths. Changing them makes unrelated beats drift and makes later timing requests harder to reason about.
+- **Fix:** keep the `T.*` values unchanged, run the new prelude as its own short tool-shell/letter pop,
+  and apply a local `timelineOffset` only when scheduling the existing first-boot animations.
+- **Rule:** when inserting a new website intro beat before an established choreography, add a local offset
+  at the call site. Preserve the shared timing constants unless the existing choreography itself is meant
+  to change.

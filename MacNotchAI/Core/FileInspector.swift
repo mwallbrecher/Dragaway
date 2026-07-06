@@ -8,7 +8,7 @@ struct FileInspector {
     static func suggestedActions(for url: URL) -> [AIAction] {
         let base = baseActions(for: url)
         guard !base.isEmpty else { return base }
-        return reorder(base, using: cachedPeek(url), isProse: isProseFile(url))
+        return reorder(base, using: cachedPeek(url), isProse: isProseFile(url), primary: url)
     }
 
     // MARK: - Peek cache
@@ -34,21 +34,31 @@ struct FileInspector {
     static func baseActions(for url: URL) -> [AIAction] {
         let ext = url.pathExtension.lowercased()
 
+        // Each list is a CANDIDATE POOL (broadly-useful first). `reorder` promotes by
+        // content signals + learned frecency, then caps the visible chips at 6 — so the
+        // trailing niche actions only surface when the file actually warrants them.
         switch ext {
         case "pdf":
-            return [.summariseBullets, .extractKeyDates, .extractKeyPoints, .translateGerman, .rephraseFormal]
-        case "txt", "md", "rtf":
-            return [.summariseBullets, .summariseShort, .rephraseFormal, .rephraseCasual, .translateGerman]
+            return [.summariseBullets, .extractKeyPoints, .extractKeyDates, .proofread,
+                    .draftReply, .explainSimply, .extractContacts, .rephraseFormal,
+                    .translateGerman, .extractTodos]
+        case "txt", "md", "rtf", "markdown":
+            return [.summariseBullets, .extractKeyPoints, .proofread, .rephraseFormal,
+                    .draftReply, .extractTodos, .turnIntoBrief, .slideOutline,
+                    .linkedinPost, .explainSimply, .translateGerman]
         case "docx", "doc", "pages":
-            return [.summariseBullets, .extractKeyPoints, .rephraseFormal, .translateGerman]
+            return [.summariseBullets, .extractKeyPoints, .proofread, .rephraseFormal,
+                    .draftReply, .turnIntoBrief, .extractContacts, .translateGerman]
         case "swift", "py", "js", "ts", "jsx", "tsx", "go", "rs", "rb", "java", "kt", "cpp", "c", "cs":
-            return [.explainCode, .findBugs, .addDocstring, .refactor]
+            return [.explainCode, .findBugs, .addDocstring, .writeTests, .refactor]
         case "png", "jpg", "jpeg", "heic", "webp", "gif", "tiff":
-            return [.describeImage, .extractTextFromImage, .generateAltText]
-        case "csv":
-            return [.summariseBullets, .extractKeyPoints]
+            return [.describeImage, .extractTextFromImage, .analyseUI, .designReference,
+                    .rebuildHTML, .generateAltText]
+        case "csv", "tsv":
+            return [.summariseTable, .describeData, .showTrends, .findOutliers,
+                    .suggestCharts, .makeReport, .extractKeyPoints]
         case "json", "xml", "yaml", "yml":
-            return [.explainCode, .summariseBullets]
+            return [.explainCode, .describeData, .summariseBullets]
         case _ where isMediaFile(url):
             // Video / audio: no hosted-AI actions (text & vision models can't read raw
             // media), BUT still DROPPABLE — the user can open them in a favorite app
@@ -58,7 +68,7 @@ struct FileInspector {
              "dmg", "pkg", "exe":
             return []   // truly unsupported — caller routes to the error stage
         default:
-            return [.summariseBullets, .summariseShort, .extractKeyPoints]
+            return [.summariseBullets, .extractKeyPoints, .proofread, .draftReply, .summariseShort]
         }
     }
 
@@ -70,7 +80,7 @@ struct FileInspector {
         guard let primary = urls.first else { return [] }
         let union = baseActions(forAll: urls)
         guard !union.isEmpty else { return union }
-        return reorder(union, using: cachedPeek(primary), isProse: isProseFile(primary))
+        return reorder(union, using: cachedPeek(primary), isProse: isProseFile(primary), primary: primary)
     }
 
     /// The instant (no-peek) union of base actions across `urls`, preserving first-URL
@@ -93,12 +103,22 @@ struct FileInspector {
         FileSignals.peek(url)
     }
 
+    /// Store an off-main peek result into the main-actor cache, so later SYNCHRONOUS
+    /// `suggestedActions(for:)` calls (result-stage Suggested rail, remove/merge
+    /// recalcs) are cache hits instead of re-peeking the file on the main thread.
+    static func seedPeekCache(for url: URL, signals: FileSignals.Signals) {
+        let mtime = (try? url.resourceValues(forKeys: [.contentModificationDateKey]))?
+            .contentModificationDate?.timeIntervalSince1970 ?? 0
+        if peekCache.count > 64 { peekCache.removeAll() }
+        peekCache["\(url.path)#\(mtime)"] = signals
+    }
+
     /// Reorder a precomputed base list using already-peeked signals (cheap, no IO).
     static func smartReorder(_ base: [AIAction],
                              primary: URL,
                              signals: FileSignals.Signals) -> [AIAction] {
         guard !base.isEmpty else { return base }
-        return reorder(base, using: signals, isProse: isProseFile(primary))
+        return reorder(base, using: signals, isProse: isProseFile(primary), primary: primary)
     }
 
     // MARK: - Heuristic reorder
@@ -108,8 +128,10 @@ struct FileInspector {
     /// length → dates/money → translate-to-English. Never returns empty; deduped; capped ≤ 6.
     static func reorder(_ base: [AIAction],
                         using s: FileSignals.Signals,
-                        isProse: Bool) -> [AIAction] {
+                        isProse: Bool,
+                        primary: URL?) -> [AIAction] {
         var actions = base
+        let name = primary?.lastPathComponent.lowercased() ?? ""
 
         // Prose carrying a ``` code fence → make "Explain This Code" available.
         if isProse, s.hasCodeFences, !actions.contains(.explainCode) {
@@ -126,10 +148,29 @@ struct FileInspector {
             }
         }
 
-        // Dates / money heavy → bubble extraction up (no-ops if those actions aren't present).
+        // ── Tabular / CSV ─────────────────────────────────────────────────────
+        if s.looksTabular {
+            moveToFront(.describeData, in: &actions)
+            if s.hasNumericColumns {
+                moveToFront(.suggestCharts, in: &actions)
+                moveToFront(.findOutliers,  in: &actions)
+                moveToFront(.showTrends,    in: &actions)        // ends up first
+            }
+        }
+
+        // ── Text flavour (no-ops when the action isn't in this file's pool) ────
+        if s.hasTodoMarkers { moveToFront(.extractTodos, in: &actions) }
+        if s.looksLikeNotes {
+            moveToFront(.linkedinPost,  in: &actions)
+            moveToFront(.slideOutline,  in: &actions)
+            moveToFront(.turnIntoBrief, in: &actions)            // ends up first of these
+        }
+        if s.looksLikeEmail { moveToFront(.draftReply, in: &actions) }
+
+        // Dates / money heavy → bubble extraction up.
         if s.hasManyDates || s.isMonetary {
             moveToFront(.extractKeyPoints, in: &actions)
-            moveToFront(.extractKeyDates,  in: &actions)        // ends up first
+            moveToFront(.extractKeyDates,  in: &actions)
         }
 
         // Non-English prose → lead with "Translate to English" and drop the to-<source> target.
@@ -139,6 +180,32 @@ struct FileInspector {
             }
             actions.removeAll { $0 == .translateEnglish }
             actions.insert(.translateEnglish, at: 0)
+        }
+
+        // ── Filename keywords (cheap, high signal) ────────────────────────────
+        if name.contains("invoice") || name.contains("rechnung") || name.contains("receipt") {
+            moveToFront(.extractKeyDates, in: &actions)
+        }
+        if name.contains("screenshot") || name.contains("mockup") ||
+           name.contains("design") || name.contains(" ui") {
+            moveToFront(.rebuildHTML, in: &actions)
+            moveToFront(.analyseUI,   in: &actions)
+        }
+        if name.contains("resume") || name.contains("cv") || name.contains("lebenslauf") {
+            moveToFront(.rephraseFormal, in: &actions)
+            moveToFront(.proofread,      in: &actions)
+        }
+        if name.contains("notes") || name.contains("meeting") || name.contains("minutes") {
+            moveToFront(.turnIntoBrief, in: &actions)
+        }
+
+        // ── Learned frecency (highest priority — the user's favourites lead) ───
+        // Only promotes actions already in this file's pool, so a learned favourite
+        // never drags a type-inappropriate action onto the wrong file. Reversed so the
+        // most-frecent ends at #0.
+        let category = primary.map { FileInspector.category(for: $0) }
+        for learned in ActionFrecency.topActions(for: category, limit: 2).reversed() {
+            moveToFront(learned, in: &actions)
         }
 
         var seen = Set<AIAction>()
@@ -171,7 +238,7 @@ struct FileInspector {
             .contains(url.pathExtension.lowercased())
     }
 
-    /// Returns true for file types AI Drop cannot process at all (archives, installers).
+    /// Returns true for file types Dragaway cannot process at all (archives, installers).
     /// Drop handlers use this to route directly to the error stage.
     ///
     /// NOTE: video/audio are NOT unsupported — they have no AI actions but ARE droppable

@@ -2,7 +2,7 @@ import SwiftUI
 import AppKit
 import Combine
 
-/// Single source of truth for *which version of AI Drop the user is on* and what's
+/// Single source of truth for *which version of Dragaway the user is on* and what's
 /// unlocked. Today only `.byok` is functional; `.freeHosted` and `.pro` are gated
 /// behind `BackendConfig.isBackendLive` and render as "coming soon" until the proxy
 /// + Paddle are wired (see `tasks/todo.md` → Phase 2).
@@ -37,7 +37,7 @@ final class EntitlementStore: ObservableObject {
         false
     }
 
-    /// Whether the hosted "AI Drop Free" version can be selected yet.
+    /// Whether the hosted "Dragaway Free" version can be selected yet.
     /// False today → onboarding shows it locked / "coming soon".
     var isHostedAvailable: Bool { BackendConfig.isBackendLive }
 

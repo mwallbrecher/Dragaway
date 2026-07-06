@@ -3,7 +3,7 @@ import SwiftUI
 struct OnboardingView: View {
     var onDismiss: () -> Void
 
-    /// The two ways to use AI Drop, chosen at the top of onboarding.
+    /// The two ways to use Dragaway, chosen at the top of onboarding.
     /// `.free` (hosted, no key) is LOCKED until `BackendConfig.isBackendLive`.
     enum Version { case free, byok }
 
@@ -27,7 +27,7 @@ struct OnboardingView: View {
                 Image(systemName: "sparkles")
                     .font(.system(size: 36, weight: .light))
                     .foregroundColor(.accentColor)
-                Text("Welcome to AI Drop")
+                Text("Welcome to Dragaway")
                     .font(.title2.bold())
                 Text("Move any file towards the Notch.")
                     .font(.subheadline)
@@ -41,12 +41,12 @@ struct OnboardingView: View {
 
             // ── Version chooser: Free (hosted) vs Bring your own key ─
             VStack(alignment: .leading, spacing: 8) {
-                Text("Choose how to use AI Drop")
+                Text("Choose how to use Dragaway")
                     .font(.headline)
 
                 VersionCard(
                     icon: "sparkles",
-                    title: "AI Drop Free",
+                    title: "Dragaway Free",
                     subtitle: "Use AI instantly — no API key needed.",
                     badge: hostedAvailable ? "Free" : "Coming soon",
                     badgeColor: hostedAvailable ? .green : .secondary,
@@ -188,7 +188,7 @@ struct OnboardingView: View {
     // ── Hosted "Free" info (shown only when backend is live) ────────
     @ViewBuilder private var hostedInfo: some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text("AI Drop Free")
+            Text("Dragaway Free")
                 .font(.headline)
                 .padding(.top, 16)
             Text("A free daily allowance, refreshed every day. No API key, no setup.")
@@ -220,6 +220,10 @@ struct OnboardingView: View {
             EntitlementStore.shared.tier = .freeHosted
         }
         UserDefaults.standard.set(true, forKey: "hasCompletedOnboarding")
+        // Fresh install: follow up with the interactive tour (skippable; Settings → Help).
+        if !UserDefaults.standard.bool(forKey: "tutorialShown") {
+            NotificationCenter.default.post(name: .showTutorial, object: nil)
+        }
         onDismiss()
     }
 

@@ -1,26 +1,0 @@
-▸ 1/5  Archiving (Release)…
-▸ 2/5  Exporting (Developer ID)…
-  exported: /Users/moritzwallbrecher/development/MacNotchAI/build/export/MacNotchAI.app
-▸ 3/5  Building DMG…
-  created: /Users/moritzwallbrecher/development/MacNotchAI/build/AIDrop-1.0.dmg
-▸ 4/5  Notarizing (this can take a few minutes)…
-Conducting pre-submission checks for AIDrop-1.0.dmg and initiating connection to the Apple notary service...
-Submission ID received
-  id: ef037263-ed1b-46c4-8768-d275812ad059
-Successfully uploaded file
-  id: ef037263-ed1b-46c4-8768-d275812ad059
-  path: /Users/moritzwallbrecher/development/MacNotchAI/build/AIDrop-1.0.dmg
-Waiting for processing to complete.
-Current status: In Progress...Current status: In Progress....Current status: Accepted.....Processing complete
-  id: ef037263-ed1b-46c4-8768-d275812ad059
-  status: Accepted
-
-▸ 5/5  Stapling…
-Processing: /Users/moritzwallbrecher/development/MacNotchAI/build/AIDrop-1.0.dmg
-Processing: /Users/moritzwallbrecher/development/MacNotchAI/build/AIDrop-1.0.dmg
-The staple and validate action worked!
-Processing: /Users/moritzwallbrecher/development/MacNotchAI/build/AIDrop-1.0.dmg
-The validate action worked!
-
-✓ Done: /Users/moritzwallbrecher/development/MacNotchAI/build/AIDrop-1.0.dmg
-  Verify on a clean Mac: right-click → Open should show no Gatekeeper warning.

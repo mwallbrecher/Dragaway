@@ -73,12 +73,36 @@ extension AIAction {
 
         // ── Transformation: mechanical, output ≈ input → cheap model ──────────
         case .translateEnglish, .translateGerman, .translateFrench, .translateSpanish,
-             .rephraseFormal, .rephraseCasual, .addDocstring:
+             .rephraseFormal, .rephraseCasual, .addDocstring, .proofread:
             return RoutingPlan(tier: .fast, taskClass: .transformation, maxOutputTokens: 4096)
+
+        // ── Data extraction / description: bounded structured output → cheap ──
+        case .extractTodos, .extractContacts, .describeData:
+            return RoutingPlan(tier: .fast, taskClass: .extraction, maxOutputTokens: 768)
+        case .summariseTable:
+            return RoutingPlan(tier: .fast, taskClass: .summarisation, maxOutputTokens: 512)
+
+        // ── Data reasoning: judgement over numbers → capable model ────────────
+        case .showTrends, .findOutliers, .suggestCharts:
+            return RoutingPlan(tier: .strong, taskClass: .explanation, maxOutputTokens: 768)
+
+        // ── Generative prose: reply / report / brief / social → capable model ─
+        case .draftReply, .explainSimply, .makeReport, .slideOutline,
+             .linkedinPost, .turnIntoBrief:
+            return RoutingPlan(tier: .strong, taskClass: .explanation, maxOutputTokens: 1536)
+
+        // ── Vision reasoning: UI critique / design spec → capable model ───────
+        case .analyseUI, .designReference:
+            return RoutingPlan(tier: .strong, taskClass: .vision, maxOutputTokens: 1024)
+        case .rebuildHTML:
+            // Vision + a full code emit → capable model, generous ceiling.
+            return RoutingPlan(tier: .strong, taskClass: .vision, maxOutputTokens: 4096)
 
         // ── Explanation: flash is plenty capable → capable model ──────────────
         case .explainCode:
             return RoutingPlan(tier: .strong, taskClass: .explanation, maxOutputTokens: 1024)
+        case .writeTests:
+            return RoutingPlan(tier: .strong, taskClass: .explanation, maxOutputTokens: 1536)
 
         // ── Deep code reasoning: the FEW tasks worth the top model (Pro only;
         //    free degrades to strong). Kept deliberately tiny — everything else

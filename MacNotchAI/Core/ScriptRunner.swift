@@ -31,11 +31,14 @@ enum ScriptRunner {
 
     static func expand(_ raw: String, file: URL, fileDir: URL, cwd: URL) -> String {
         let root = gitRoot(from: fileDir) ?? fileDir
+        // Shell-quote every substituted value. Without this a perfectly ordinary
+        // filename with a space ("My Report.pdf") breaks the command, and a crafted
+        // name (`foo; rm -rf ~`) would inject into the user's shell.
         return raw
-            .replacingOccurrences(of: "{file}", with: file.path)
-            .replacingOccurrences(of: "{dir}",  with: fileDir.path)
-            .replacingOccurrences(of: "{name}", with: file.lastPathComponent)
-            .replacingOccurrences(of: "{root}", with: root.path)
+            .replacingOccurrences(of: "{file}", with: shellQuoted(file.path))
+            .replacingOccurrences(of: "{dir}",  with: shellQuoted(fileDir.path))
+            .replacingOccurrences(of: "{name}", with: shellQuoted(file.lastPathComponent))
+            .replacingOccurrences(of: "{root}", with: shellQuoted(root.path))
     }
 
     /// Nearest ancestor directory containing `.git` (a repo working tree). `nil` if none.

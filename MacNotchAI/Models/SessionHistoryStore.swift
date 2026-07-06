@@ -52,7 +52,22 @@ final class SessionHistoryStore: ObservableObject {
     /// Newest-first. Capped at `maxSessions`.
     @Published private(set) var sessions: [SessionRecord] = []
 
-    private let maxSessions = 10
+    // 25 (was 10) so the Search Sessions window has real depth to search.
+    private let maxSessions = 25
+
+    /// Sessions whose filename, prompts, or result text contain `query`
+    /// (case-insensitive). Empty query → everything, newest first.
+    func search(_ query: String) -> [SessionRecord] {
+        let q = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !q.isEmpty else { return sessions }
+        return sessions.filter { rec in
+            if rec.fileName.localizedCaseInsensitiveContains(q) { return true }
+            return rec.turns.contains {
+                $0.promptTitle.localizedCaseInsensitiveContains(q) ||
+                $0.resultText.localizedCaseInsensitiveContains(q)
+            }
+        }
+    }
 
     /// Identity of the drop currently in progress. Armed by beginSession(); the
     /// record itself isn't created until the first turn is recorded.
