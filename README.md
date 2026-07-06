@@ -2,7 +2,7 @@
 
 **Your daily tools, one drag away.**
 
-Dragaway is a native macOS menu-bar app that turns your physical notch into a universal drag-router. Start dragging *anything* — a file, a text selection, a link, an image from the web — and a pill emerges from the notch. Drop it to get instant AI actions, run local file conversions, or flick it into any of your favorite apps with a radial launcher. No browser, no chat window, no context switching.
+Dragaway (fka AI-Drop) is a native macOS menu-bar app that turns your physical notch into a universal drag-router. Start dragging *anything* — a file, a text selection, a link, an image from the web — and a pill emerges from the notch. Drop it to get instant AI actions, run local file conversions, or flick it into any of your favorite apps with a radial launcher. No browser, no chat window, no context switching.
 
 ![Dragaway in action](https://github.com/mwallbrecher/Dragaway/releases/download/v0.7.0/AiDropPopUp.gif)
 
