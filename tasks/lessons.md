@@ -613,13 +613,34 @@
 - **Rule:** if a CSS animation is meant to communicate elapsed time, keep its progress property linear
   and persist the computed state before pausing or cancelling it.
 
-### [WEB-14] Add boot preludes with a local offset instead of rewriting shared beats
+### [WEB-14] Keep shared beats unchanged when inserting a boot prelude
 - **What was wrong:** adding an initial tool/letter pop could have been done by moving `T.APPEAR`,
   `T.PILL_APPEAR`, `T.EXPAND`, and the fill timings directly.
 - **Why:** those constants define the established drag/drop/morph choreography and are reused by replay
   paths. Changing them makes unrelated beats drift and makes later timing requests harder to reason about.
-- **Fix:** keep the `T.*` values unchanged, run the new prelude as its own short tool-shell/letter pop,
-  and apply a local `timelineOffset` only when scheduling the existing first-boot animations.
-- **Rule:** when inserting a new website intro beat before an established choreography, add a local offset
-  at the call site. Preserve the shared timing constants unless the existing choreography itself is meant
-  to change.
+- **Fix:** keep the `T.*` values unchanged and run any new intro beat before the main choreography starts.
+  If the intro should match replay, use the replay prelude handoff instead of duplicating offset math.
+- **Rule:** preserve shared timing constants unless the existing choreography itself is meant to change.
+  Insert new lead-in beats outside the main timeline.
+
+### [WEB-15] Share the replay prelude when first boot must match the loop
+- **What was wrong:** the first boot inserted the tool/letter pop by delaying the existing choreography
+  with a local timeline offset and a longer custom pop window.
+- **Why:** delaying the main animations while also carrying the pop duration into the spin phase changed
+  the perceived acceleration window. It made the first boot diverge from the replay loop and reintroduced a
+  small handoff hitch when the last tool finished appearing.
+- **Fix:** route first boot and replay through the same prelude/handoff helper. Keep the established
+  `runChoreography` timeline unshifted, keep visible tool shells on the inner node, and carry forward only
+  the spin phase from the prelude.
+- **Rule:** when first-run choreography should behave like replay, share the exact prelude implementation;
+  do not approximate it with extra offsets inside the main choreography.
+
+### [WEB-16] Change replay content after the outgoing surface is hidden
+- **What was wrong:** the website replay advanced the file-type tab at the start of the replay prelude,
+  while the expanded demo window was still visible.
+- **Why:** the tab push changes the active content immediately, so users see the next file type appear on
+  the old, still-open card before the reset/fade choreography has visually handed off.
+- **Fix:** keep the existing replay delays and fade duration, but move `advanceFileTypeForReplay()` after
+  the pill fade completes and before rebuilding the next replay state.
+- **Rule:** when a loop changes demo content between cycles, perform the content swap after the outgoing
+  surface is hidden, not at the same moment the transition begins.

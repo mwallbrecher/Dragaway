@@ -16,7 +16,7 @@
             <BuildableReference
                BuildableIdentifier = "primary"
                BlueprintIdentifier = "59114F5C2F699A5100E47DD9"
-               BuildableName = "MacNotchAI.app"
+               BuildableName = "Dragaway.app"
                BlueprintName = "MacNotchAI"
                ReferencedContainer = "container:MacNotchAI.xcodeproj">
             </BuildableReference>
@@ -45,7 +45,7 @@
          <BuildableReference
             BuildableIdentifier = "primary"
             BlueprintIdentifier = "59114F5C2F699A5100E47DD9"
-            BuildableName = "MacNotchAI.app"
+            BuildableName = "Dragaway.app"
             BlueprintName = "MacNotchAI"
             ReferencedContainer = "container:MacNotchAI.xcodeproj">
          </BuildableReference>
@@ -62,7 +62,7 @@
          <BuildableReference
             BuildableIdentifier = "primary"
             BlueprintIdentifier = "59114F5C2F699A5100E47DD9"
-            BuildableName = "MacNotchAI.app"
+            BuildableName = "Dragaway.app"
             BlueprintName = "MacNotchAI"
             ReferencedContainer = "container:MacNotchAI.xcodeproj">
          </BuildableReference>

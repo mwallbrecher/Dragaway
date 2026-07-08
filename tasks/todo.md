@@ -1,5 +1,53 @@
 # AI Drop — App Store Roadmap & Review
 
+## Website — Pricing page (DONE 2026-07-08)
+
+- [x] Inspect existing static subpage structure and shared styles.
+- [x] Add a Pricing page comparing Free and Pro.
+- [x] Link Pricing from the existing website navigation/footer.
+- [x] Verify syntax and browser rendering.
+
+---
+
+## Website — active page background gradient (DONE 2026-07-08)
+
+- [x] Commit the current website state before touching the background work.
+- [x] Add a page-wide black alpha gradient layer with multiple organic shapes over the Monterey wallpaper.
+- [x] Tie the background layer to scroll with subtle parallax while keeping content and app UI fixed.
+- [x] Replace the too-focused center swirl with full-page uneven black-alpha darkening patches.
+- [x] Make the page-wide darkening more visible and add a very light wallpaper blur.
+- [x] Split the background effect into separate patch layers so alpha and blur differences are visibly uneven.
+- [x] Increase the base darkening and make patch movement/opacity respond more noticeably to scroll.
+- [x] Darken the shared background further and make the scroll-driven ambient movement more obvious.
+- [x] Cache-bust touched website assets and verify syntax/browser state.
+
+---
+
+## Website — Helvetica copy font test (DONE 2026-07-06)
+
+- [x] Add a Helvetica/Helvetica Neue website copy font stack for the temporary test.
+- [x] Keep app demo text and UI controls on the existing SF/System stack.
+- [x] Cache-bust touched website assets and verify syntax/browser state.
+
+---
+
+## Website — hero brand cleanup (DONE 2026-07-06)
+
+- [x] Add the dragaway logo above the Dragaway eyebrow in the hero copy stack.
+- [x] Match the hero logo size/style to the footer brand mark.
+- [x] Remove the "Speeding up..." claim row below the headline.
+- [x] Cache-bust touched website assets and verify syntax/browser state.
+
+---
+
+## Website — replay tab push timing (DONE 2026-07-06)
+
+- [x] Delay the automatic file-type tab change until after the open demo window has faded out.
+- [x] Keep the replay fade, empty-screen hold, file pop, and tool-pop choreography timings unchanged.
+- [x] Cache-bust touched website assets and verify syntax/browser state.
+
+---
+
 ## Website — initial tool/text pop choreography (DONE 2026-07-06)
 
 - [x] Disable the file-type toggle progress lighting again while keeping the auto replay tab push.
@@ -10,6 +58,10 @@
       pop order/timing.
 - [x] Make the initial pop visibly readable by adding a short pre-pop hold and slightly longer first-boot
       pop timing.
+- [x] Refactor the first boot to use the same prelude handoff as the loop so radius and acceleration
+      timelines stay unchanged.
+- [x] Keep the outer tool rotation alive for the whole pop duration so there is no hitch when the last
+      tool finishes appearing.
 - [x] Cache-bust touched website assets and verify syntax/browser state.
 
 ---

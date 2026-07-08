@@ -10,6 +10,15 @@ Dragaway (fka AI-Drop) is a native macOS menu-bar app that turns your physical n
 
 ---
 
+## What's New in v1.1.1
+
+- Dragaway now supports assets beyond just files. You can drag. and drop literally anything. Files, Safari tabs, Selections and more
+- Launch your current clipboard directly to Dragaway session with ⌃⌘N
+- You can now add taken screenshots automatically in a Session.
+- Dragaway can now be updated natively without a need to reinstalling the .dmg.
+
+---
+
 ## What's New in v1.1
 
 - **Radial launcher — a second drag mode** — hold a key as you start dragging a file and a **wheel of your favorite apps** fans out around the cursor. Flick toward a wedge and release to open the file in that app — no drop target to aim for, no menu to click. The apps come from your **Favorite Tools**, category-aware for the file you're dragging.

@@ -37,7 +37,7 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
-		59114F5D2F699A5100E47DD9 /* MacNotchAI.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = MacNotchAI.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		59114F5D2F699A5100E47DD9 /* Dragaway.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Dragaway.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		59D792082FCCD1CF00A261BB /* AddToAIDrop.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = AddToAIDrop.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		59D7920A2FCCD1CF00A261BB /* Cocoa.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Cocoa.framework; path = System/Library/Frameworks/Cocoa.framework; sourceTree = SDKROOT; };
 /* End PBXFileReference section */
@@ -101,7 +101,7 @@
 		59114F5E2F699A5100E47DD9 /* Products */ = {
 			isa = PBXGroup;
 			children = (
-				59114F5D2F699A5100E47DD9 /* MacNotchAI.app */,
+				59114F5D2F699A5100E47DD9 /* Dragaway.app */,
 				59D792082FCCD1CF00A261BB /* AddToAIDrop.appex */,
 			);
 			name = Products;
@@ -140,7 +140,7 @@
 				59F0A81C2FFAB93B00DBC473 /* Sparkle */,
 			);
 			productName = MacNotchAI;
-			productReference = 59114F5D2F699A5100E47DD9 /* MacNotchAI.app */;
+			productReference = 59114F5D2F699A5100E47DD9 /* Dragaway.app */;
 			productType = "com.apple.product-type.application";
 		};
 		59D792072FCCD1CF00A261BB /* AddToAIDrop */ = {
@@ -377,27 +377,27 @@
 				CODE_SIGN_ENTITLEMENTS = MacNotchAI/MacNotchAI.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 3;
+				CURRENT_PROJECT_VERSION = 4;
 				DEVELOPMENT_TEAM = ASN2KAJ266;
 				ENABLE_APP_SANDBOX = NO;
 				ENABLE_HARDENED_RUNTIME = YES;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
-				INFOPLIST_KEY_LSUIElement = YES;
-				INFOPLIST_KEY_NSAccessibilityUsageDescription = "AI Drop needs Accessibility access to detect when you drag files.";
-				INFOPLIST_KEY_NSHumanReadableCopyright = "";
-				INFOPLIST_KEY_NSMicrophoneUsageDescription = "AI Drop uses the microphone for speech-to-text so you can dictate prompts.";
-				INFOPLIST_KEY_NSSpeechRecognitionUsageDescription = "AI Drop uses speech recognition to convert your voice into text prompts.";
 				INFOPLIST_KEY_CFBundleDisplayName = Dragaway;
+				INFOPLIST_KEY_LSUIElement = YES;
+				INFOPLIST_KEY_NSAccessibilityUsageDescription = "Dragaway needs Accessibility access to detect when you drag files.";
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Dragaway uses the microphone for speech-to-text so you can dictate prompts.";
+				INFOPLIST_KEY_NSSpeechRecognitionUsageDescription = "Dragaway uses speech recognition to convert your voice into text prompts.";
 				INFOPLIST_KEY_SUFeedURL = "https://raw.githubusercontent.com/mwallbrecher/Dragaway/main/appcast.xml";
 				INFOPLIST_KEY_SUPublicEDKey = "BOktIK1I9MB/+741Caw4opOxiX2oU1LUb4AN0UGlN6U=";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
-				MARKETING_VERSION = 1.1;
-				PRODUCT_BUNDLE_IDENTIFIER = com.wallbrecher.MacNotchAI;
-				PRODUCT_NAME = "$(TARGET_NAME)";
+				MARKETING_VERSION = 1.1.1;
+				PRODUCT_BUNDLE_IDENTIFIER = com.wallbrecher.dragaway;
+				PRODUCT_NAME = Dragaway;
 				STRING_CATALOG_GENERATE_SYMBOLS = YES;
 				SWIFT_APPROACHABLE_CONCURRENCY = YES;
 				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
@@ -415,27 +415,27 @@
 				CODE_SIGN_ENTITLEMENTS = MacNotchAI/MacNotchAI.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 3;
+				CURRENT_PROJECT_VERSION = 4;
 				DEVELOPMENT_TEAM = ASN2KAJ266;
 				ENABLE_APP_SANDBOX = NO;
 				ENABLE_HARDENED_RUNTIME = YES;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
-				INFOPLIST_KEY_LSUIElement = YES;
-				INFOPLIST_KEY_NSAccessibilityUsageDescription = "AI Drop needs Accessibility access to detect when you drag files.";
-				INFOPLIST_KEY_NSHumanReadableCopyright = "";
-				INFOPLIST_KEY_NSMicrophoneUsageDescription = "AI Drop uses the microphone for speech-to-text so you can dictate prompts.";
-				INFOPLIST_KEY_NSSpeechRecognitionUsageDescription = "AI Drop uses speech recognition to convert your voice into text prompts.";
 				INFOPLIST_KEY_CFBundleDisplayName = Dragaway;
+				INFOPLIST_KEY_LSUIElement = YES;
+				INFOPLIST_KEY_NSAccessibilityUsageDescription = "Dragaway needs Accessibility access to detect when you drag files.";
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Dragaway uses the microphone for speech-to-text so you can dictate prompts.";
+				INFOPLIST_KEY_NSSpeechRecognitionUsageDescription = "Dragaway uses speech recognition to convert your voice into text prompts.";
 				INFOPLIST_KEY_SUFeedURL = "https://raw.githubusercontent.com/mwallbrecher/Dragaway/main/appcast.xml";
 				INFOPLIST_KEY_SUPublicEDKey = "BOktIK1I9MB/+741Caw4opOxiX2oU1LUb4AN0UGlN6U=";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
-				MARKETING_VERSION = 1.1;
-				PRODUCT_BUNDLE_IDENTIFIER = com.wallbrecher.MacNotchAI;
-				PRODUCT_NAME = "$(TARGET_NAME)";
+				MARKETING_VERSION = 1.1.1;
+				PRODUCT_BUNDLE_IDENTIFIER = com.wallbrecher.dragaway;
+				PRODUCT_NAME = Dragaway;
 				STRING_CATALOG_GENERATE_SYMBOLS = YES;
 				SWIFT_APPROACHABLE_CONCURRENCY = YES;
 				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
@@ -450,7 +450,7 @@
 			buildSettings = {
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 3;
+				CURRENT_PROJECT_VERSION = 4;
 				DEVELOPMENT_TEAM = ASN2KAJ266;
 				ENABLE_APP_SANDBOX = YES;
 				ENABLE_HARDENED_RUNTIME = YES;
@@ -464,8 +464,8 @@
 					"@executable_path/../Frameworks",
 					"@executable_path/../../../../Frameworks",
 				);
-				MARKETING_VERSION = 1.1;
-				PRODUCT_BUNDLE_IDENTIFIER = com.wallbrecher.MacNotchAI.AddToAIDrop;
+				MARKETING_VERSION = 1.1.1;
+				PRODUCT_BUNDLE_IDENTIFIER = com.wallbrecher.dragaway.AddToAIDrop;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SKIP_INSTALL = YES;
 				STRING_CATALOG_GENERATE_SYMBOLS = YES;
@@ -481,7 +481,7 @@
 			buildSettings = {
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 3;
+				CURRENT_PROJECT_VERSION = 4;
 				DEVELOPMENT_TEAM = ASN2KAJ266;
 				ENABLE_APP_SANDBOX = YES;
 				ENABLE_HARDENED_RUNTIME = YES;
@@ -495,8 +495,8 @@
 					"@executable_path/../Frameworks",
 					"@executable_path/../../../../Frameworks",
 				);
-				MARKETING_VERSION = 1.1;
-				PRODUCT_BUNDLE_IDENTIFIER = com.wallbrecher.MacNotchAI.AddToAIDrop;
+				MARKETING_VERSION = 1.1.1;
+				PRODUCT_BUNDLE_IDENTIFIER = com.wallbrecher.dragaway.AddToAIDrop;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SKIP_INSTALL = YES;
 				STRING_CATALOG_GENERATE_SYMBOLS = YES;

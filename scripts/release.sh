@@ -108,7 +108,19 @@ fi
 DL_PREFIX="https://github.com/mwallbrecher/Dragaway/releases/download/v$VERSION/"
 if [[ -n "$GEN_APPCAST" && -x "$GEN_APPCAST" ]]; then
   # generate_appcast reads every archive in BUILD_DIR, signs it, and writes appcast.xml.
-  "$GEN_APPCAST" --download-url-prefix "$DL_PREFIX" -o "$REPO_ROOT/appcast.xml" "$BUILD_DIR"
+  # Keychain access for the EdDSA key fails silently in some shells, so prefer a
+  # key FILE when present (create once:  generate_keys -x ~/.dragaway_sparkle_key).
+  KEY_FILE="$HOME/.dragaway_sparkle_key"
+  if [[ -f "$KEY_FILE" ]]; then
+    "$GEN_APPCAST" --ed-key-file "$KEY_FILE" \
+      --download-url-prefix "$DL_PREFIX" -o "$REPO_ROOT/appcast.xml" "$BUILD_DIR"
+  else
+    "$GEN_APPCAST" --download-url-prefix "$DL_PREFIX" -o "$REPO_ROOT/appcast.xml" "$BUILD_DIR"
+  fi
+  if ! grep -q edSignature "$REPO_ROOT/appcast.xml"; then
+    echo "  ⚠ appcast is UNSIGNED — installed apps will reject this update."
+    echo "    Fix: export the key once:  <sparkle>/bin/generate_keys -x ~/.dragaway_sparkle_key"
+  fi
   echo "  wrote: $REPO_ROOT/appcast.xml"
 else
   echo "  ⚠ generate_appcast not found — set SPARKLE_BIN or add the Sparkle package first."

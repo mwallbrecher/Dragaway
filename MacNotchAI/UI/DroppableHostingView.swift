@@ -28,6 +28,14 @@ final class DroppableHostingView: NSHostingView<OverlayView> {
     /// Non-file payload (text / link / raw image) captured at draggingEntered —
     /// materialized into a small local file only when the drop actually lands.
     private var cachedPayload: DropMaterializer.Payload?
+    /// Drag carries file PROMISES (Safari tab, Photos, Mail) — the real file is only
+    /// written by the source app AFTER we accept the drop.
+    private var cachedHasPromise = false
+    private static let promiseQueue: OperationQueue = {
+        let q = OperationQueue()
+        q.maxConcurrentOperationCount = 1      // serial → safe shared accumulator
+        return q
+    }()
 
     required init(rootView: OverlayView) {
         super.init(rootView: rootView)
@@ -40,9 +48,14 @@ final class DroppableHostingView: NSHostingView<OverlayView> {
             .string,
             .URL,
             NSPasteboard.PasteboardType("public.url"),
+            // Safari link/tab drags: legacy URL-with-title flavours. Without these
+            // registered, AppKit never even offers us the drop.
+            NSPasteboard.PasteboardType("WebURLsWithTitlesPboardType"),
+            NSPasteboard.PasteboardType("public.url-name"),
+            NSPasteboard.PasteboardType("Apple URL pasteboard type"),
             .tiff,
             .png,
-        ])
+        ] + NSFilePromiseReceiver.readableDraggedTypes.map { NSPasteboard.PasteboardType($0) })
         // Transparent layer — prevents gray/white flash before SwiftUI paints
         wantsLayer = true
         layer?.backgroundColor = CGColor.clear
@@ -61,13 +74,29 @@ final class DroppableHostingView: NSHostingView<OverlayView> {
     var wantsPeriodicDraggingUpdates: Bool { false }
 
     override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
+#if DEBUG
+        dragDiag("ENTERED types: "
+            + (sender.draggingPasteboard.types ?? []).map(\.rawValue).joined(separator: " | "))
+#endif
         let urls = extractURLs(from: sender.draggingPasteboard)
         if urls.isEmpty {
             // Non-file drag (text / link / raw image) — capture the payload now while
             // the drag pasteboard is fully open; it's written to disk only on drop.
-            guard let payload = DropMaterializer.capture(from: sender.draggingPasteboard)
-            else { return [] }
-            cachedPayload = payload
+            let payload = DropMaterializer.capture(from: sender.draggingPasteboard)
+            let hasPromise = sender.draggingPasteboard.canReadObject(
+                forClasses: [NSFilePromiseReceiver.self], options: nil)
+            // Prefer a promise over a text-only payload: a Safari TAB drag offers
+            // both a title string and a .webloc promise — the promise has the URL.
+            var preferPromise = hasPromise && payload == nil
+            if hasPromise, let p = payload, case .text = p { preferPromise = true }
+            if preferPromise {
+                cachedHasPromise = true
+                cachedPayload = nil
+            } else if let payload {
+                cachedPayload = payload
+            } else {
+                return []
+            }
             cachedDropURLs = []
             OverlayViewModel.shared.isDragHovering = isOverPillArea(sender)
             return .copy
@@ -85,7 +114,7 @@ final class DroppableHostingView: NSHostingView<OverlayView> {
         // Payload already cached from draggingEntered — no second pasteboard read needed.
         // Accept while EITHER file URLs or a non-file payload (text/link/image) is
         // cached; guarding on URLs alone silently refused every "drag anything" drop.
-        guard !cachedDropURLs.isEmpty || cachedPayload != nil else { return [] }
+        guard !cachedDropURLs.isEmpty || cachedPayload != nil || cachedHasPromise else { return [] }
         // Re-evaluate hover as the cursor moves within the window so the jelly fires
         // exactly when the cursor crosses into the pill, not into the canvas border.
         OverlayViewModel.shared.isDragHovering = isOverPillArea(sender)
@@ -95,6 +124,7 @@ final class DroppableHostingView: NSHostingView<OverlayView> {
     override func draggingExited(_ sender: NSDraggingInfo?) {
         cachedDropURLs = []
         cachedPayload = nil
+        cachedHasPromise = false
         OverlayViewModel.shared.isDragHovering = false
     }
 
@@ -109,6 +139,20 @@ final class DroppableHostingView: NSHostingView<OverlayView> {
 
         var urls = cachedDropURLs
         cachedDropURLs = []
+        // File-promise drop (Safari tab, Photos, Mail): accept NOW, the source app
+        // writes the real file(s) asynchronously — the session opens on delivery.
+        if urls.isEmpty, cachedHasPromise {
+            cachedHasPromise = false
+            cachedPayload = nil
+            if let receivers = sender.draggingPasteboard.readObjects(
+                   forClasses: [NSFilePromiseReceiver.self]) as? [NSFilePromiseReceiver],
+               !receivers.isEmpty {
+                receivePromises(receivers)
+                return true
+            }
+            return false
+        }
+        cachedHasPromise = false
         // Non-file drop → materialize the captured text / link / image into a small
         // local file so the whole downstream file pipeline works unchanged.
         if urls.isEmpty, let payload = cachedPayload,
@@ -149,6 +193,38 @@ final class DroppableHostingView: NSHostingView<OverlayView> {
         }
         grabFocusAfterDrop()
         return true
+    }
+
+    /// Receive promised files into the Drops folder, unwrap .webloc links (Safari
+    /// tabs) through the normal web path, then open/merge the session on the main
+    /// actor. Failures simply produce no session — the drop can never wedge anything.
+    private func receivePromises(_ receivers: [NSFilePromiseReceiver]) {
+        let dest = DropMaterializer.dropsDirectory()
+        var received: [URL] = []                      // mutated only on the serial queue
+        let group = DispatchGroup()
+        for receiver in receivers {
+            group.enter()
+            receiver.receivePromisedFiles(atDestination: dest, options: [:],
+                                          operationQueue: Self.promiseQueue) { url, error in
+                if error == nil { received.append(url) }
+                group.leave()
+            }
+        }
+        group.notify(queue: .main) {
+            MainActor.assumeIsolated {
+                let final = received.map { DropMaterializer.normalizeReceived($0) }
+                    .filter { !FileInspector.isUnsupportedFileType($0) }
+                guard !final.isEmpty else { return }
+                let vm = OverlayViewModel.shared
+                if case .waitingForDrop = vm.stage {
+                    NotificationCenter.default.post(name: .radialOpenSession, object: final)
+                } else {
+                    withAnimation(.spring(response: 0.36, dampingFraction: 1.0)) {
+                        vm.pendingDroppedURLs = final
+                    }
+                }
+            }
+        }
     }
 
     /// Pull the app + overlay window into focus right after a completed drop, so the

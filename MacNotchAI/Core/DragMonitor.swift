@@ -1,6 +1,22 @@
 import AppKit
 import Combine
 
+/// DEBUG drag diagnostics → /tmp/dragaway_diag.txt (unified log proved unreliable).
+func dragDiag(_ s: String) {
+#if DEBUG
+    let line = "\(Date()) \(s)\n"
+    guard let d = line.data(using: .utf8) else { return }
+    let path = "/tmp/dragaway_diag.txt"
+    if let h = FileHandle(forWritingAtPath: path) {
+        defer { try? h.close() }
+        h.seekToEndOfFile()
+        h.write(d)
+    } else {
+        FileManager.default.createFile(atPath: path, contents: d)
+    }
+#endif
+}
+
 /// Watches for file drags anywhere on screen.
 /// Only publishes `isDraggingFile`; the actual stage transition (Stage 1 → 2)
 /// is handled by DroppableHostingView via NSDraggingDestination.
@@ -130,6 +146,14 @@ class DragMonitor: ObservableObject {
 
         // "Drag anything": files AND text selections / links / raw images wake the pill.
         let hasDrag = hasDroppable(on: pb)
+#if DEBUG
+        // Diagnostics for drags the pill wakes for but can't catch (e.g. Safari tabs):
+        // append the DECLARED drag types to /tmp/dragaway_diag.txt once per session.
+        if hasDrag, !isDraggingFile {
+            let t = (pb.types ?? []).map(\.rawValue).joined(separator: " | ")
+            dragDiag("monitor-types: \(t)")
+        }
+#endif
         if hasDrag, !isDraggingFile, !RadialLauncherController.shared.isActive {
             let hk = HotkeyManager.shared
 
@@ -185,13 +209,33 @@ class DragMonitor: ObservableObject {
     /// the moment the drag pasteboard empties.
     private func startPolling() {
         stopPolling()
+        var buttonUpTicks = 0
         let t = Timer(timeInterval: 0.10, repeats: true) { [weak self] _ in
             guard let self else { return }
             // Timer fires on the main runloop; MainActor.assumeIsolated is safe.
             MainActor.assumeIsolated {
+                // Fast path: the source app cleared the drag pasteboard (files do this).
                 if !self.hasDroppable(on: NSPasteboard(name: .drag)) {
                     self.isDraggingFile = false
                     self.stopPolling()
+                    return
+                }
+                // WATCHDOG — text/URL/tab drags often leave STALE content on the drag
+                // pasteboard after release, so the check above never fires and
+                // isDraggingFile would stay true FOREVER (every future drag then hits
+                // the `!isDraggingFile` guard → the pill never appears again until
+                // relaunch). The physical button is ground truth: a drag cannot
+                // outlive the press. Three consecutive button-up ticks (~0.3 s grace,
+                // so a caught drop's dragCompleted() wins first) ⇒ the drag is over,
+                // whatever the pasteboard claims.
+                if NSEvent.pressedMouseButtons & 1 == 0 {
+                    buttonUpTicks += 1
+                    if buttonUpTicks >= 3 {
+                        self.isDraggingFile = false
+                        self.stopPolling()
+                    }
+                } else {
+                    buttonUpTicks = 0
                 }
             }
         }
@@ -227,7 +271,11 @@ class DragMonitor: ObservableObject {
     /// Anything the pill can accept: real files, or a materializable payload
     /// (text selection / web link / raw image — see DropMaterializer).
     private func hasDroppable(on pasteboard: NSPasteboard) -> Bool {
-        hasFile(on: pasteboard) || DropMaterializer.hasPayload(on: pasteboard)
+        if hasFile(on: pasteboard) || DropMaterializer.hasPayload(on: pasteboard) { return true }
+        // File PROMISES (Safari tab → .webloc, Photos, Mail) — content arrives only
+        // after an accepted drop, but the promise types are declared during the drag.
+        let types = Set((pasteboard.types ?? []).map(\.rawValue))
+        return !types.isDisjoint(with: NSFilePromiseReceiver.readableDraggedTypes)
     }
 
     private func hasFile(on pasteboard: NSPasteboard) -> Bool {
