@@ -26,6 +26,7 @@ PROJECT="MacNotchAI.xcodeproj"
 SCHEME="MacNotchAI"
 APP_NAME="MacNotchAI"
 NOTARY_PROFILE="${NOTARY_PROFILE:-AIDrop-Notary}"
+SPARKLE_ACCOUNT="${SPARKLE_ACCOUNT:-ed25519}"
 
 BUILD_DIR="$REPO_ROOT/build"
 ARCHIVE="$BUILD_DIR/$APP_NAME.xcarchive"
@@ -64,6 +65,14 @@ run_xcb "$BUILD_DIR/export.log" \
 APP_PATH="$(/usr/bin/find "$EXPORT_DIR" -maxdepth 1 -name '*.app' -print -quit)"
 [[ -n "$APP_PATH" ]] || { echo "✗ exported .app not found in $EXPORT_DIR" >&2; exit 1; }
 echo "  exported: $APP_PATH"
+
+SPARKLE_PUBLIC_KEY="$(/usr/libexec/PlistBuddy -c 'Print :SUPublicEDKey' \
+  "$APP_PATH/Contents/Info.plist" 2>/dev/null || true)"
+if [[ -z "$SPARKLE_PUBLIC_KEY" ]]; then
+  echo "✗ exported app is missing SUPublicEDKey; Sparkle will generate an unsigned appcast." >&2
+  echo "  Add SUPublicEDKey to the app's Info.plist before releasing." >&2
+  exit 1
+fi
 
 # Version for the DMG name (falls back to 0.0.0 if unreadable).
 VERSION="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' \
@@ -115,11 +124,16 @@ if [[ -n "$GEN_APPCAST" && -x "$GEN_APPCAST" ]]; then
     "$GEN_APPCAST" --ed-key-file "$KEY_FILE" \
       --download-url-prefix "$DL_PREFIX" -o "$REPO_ROOT/appcast.xml" "$BUILD_DIR"
   else
-    "$GEN_APPCAST" --download-url-prefix "$DL_PREFIX" -o "$REPO_ROOT/appcast.xml" "$BUILD_DIR"
+    "$GEN_APPCAST" --account "$SPARKLE_ACCOUNT" \
+      --download-url-prefix "$DL_PREFIX" -o "$REPO_ROOT/appcast.xml" "$BUILD_DIR"
   fi
-  if ! grep -q edSignature "$REPO_ROOT/appcast.xml"; then
-    echo "  ⚠ appcast is UNSIGNED — installed apps will reject this update."
-    echo "    Fix: export the key once:  <sparkle>/bin/generate_keys -x ~/.dragaway_sparkle_key"
+  if ! awk -v dmg="Dragaway-$VERSION.dmg" \
+      '/<enclosure / && index($0, dmg) && /edSignature=/ { found = 1 } END { exit found ? 0 : 1 }' \
+      "$REPO_ROOT/appcast.xml"; then
+    echo "✗ appcast entry for Dragaway-$VERSION.dmg is unsigned; installed apps will reject this update." >&2
+    echo "  Check that the exported app contains SUPublicEDKey and that the private key is in Keychain account '$SPARKLE_ACCOUNT'." >&2
+    echo "  Or export the key once: <sparkle>/bin/generate_keys -x ~/.dragaway_sparkle_key" >&2
+    exit 1
   fi
   echo "  wrote: $REPO_ROOT/appcast.xml"
 else

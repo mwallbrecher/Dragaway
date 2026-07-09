@@ -53,6 +53,10 @@ final class DroppableHostingView: NSHostingView<OverlayView> {
             NSPasteboard.PasteboardType("WebURLsWithTitlesPboardType"),
             NSPasteboard.PasteboardType("public.url-name"),
             NSPasteboard.PasteboardType("Apple URL pasteboard type"),
+            NSPasteboard.PasteboardType("com.apple.pasteboard.promised-file-url"),
+            NSPasteboard.PasteboardType("NSPromiseContentsPboardType"),
+            NSPasteboard.PasteboardType("com.apple.Safari.bookmarkDictionaryList"),
+            NSPasteboard.PasteboardType("com.apple.safari.tab"),
             .tiff,
             .png,
         ] + NSFilePromiseReceiver.readableDraggedTypes.map { NSPasteboard.PasteboardType($0) })
@@ -80,6 +84,13 @@ final class DroppableHostingView: NSHostingView<OverlayView> {
 #endif
         let urls = extractURLs(from: sender.draggingPasteboard)
         if urls.isEmpty {
+            if let url = webURL(from: sender.draggingPasteboard) {
+                cachedDropURLs = []
+                cachedPayload = .webURL(url)
+                cachedHasPromise = false
+                OverlayViewModel.shared.isDragHovering = isOverPillArea(sender)
+                return .copy
+            }
             // Non-file drag (text / link / raw image) — capture the payload now while
             // the drag pasteboard is fully open; it's written to disk only on drop.
             let payload = DropMaterializer.capture(from: sender.draggingPasteboard)
@@ -297,5 +308,21 @@ final class DroppableHostingView: NSHostingView<OverlayView> {
             return paths.map { URL(fileURLWithPath: $0) }
         }
         return []
+    }
+
+    private func webURL(from pasteboard: NSPasteboard) -> URL? {
+        if let s = pasteboard.string(forType: NSPasteboard.PasteboardType("public.url"))?
+            .trimmingCharacters(in: .whitespacesAndNewlines),
+           let url = URL(string: s), url.scheme == "http" || url.scheme == "https" {
+            return url
+        }
+        if let plist = pasteboard.propertyList(
+            forType: NSPasteboard.PasteboardType("WebURLsWithTitlesPboardType")
+        ) as? [[String]],
+           let s = plist.first?.first,
+           let url = URL(string: s), url.scheme == "http" || url.scheme == "https" {
+            return url
+        }
+        return nil
     }
 }

@@ -50,11 +50,21 @@
 			);
 			target = 59D792072FCCD1CF00A261BB /* AddToAIDrop */;
 		};
+		59F0AA4B30002A0700DBC473 /* Exceptions for "MacNotchAI" folder in "MacNotchAI" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Info.plist,
+			);
+			target = 59114F5C2F699A5100E47DD9 /* MacNotchAI */;
+		};
 /* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
 		59114F5F2F699A5100E47DD9 /* MacNotchAI */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				59F0AA4B30002A0700DBC473 /* Exceptions for "MacNotchAI" folder in "MacNotchAI" target */,
+			);
 			path = MacNotchAI;
 			sourceTree = "<group>";
 		};
@@ -383,6 +393,7 @@
 				ENABLE_HARDENED_RUNTIME = YES;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = MacNotchAI/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = Dragaway;
 				INFOPLIST_KEY_LSUIElement = YES;
 				INFOPLIST_KEY_NSAccessibilityUsageDescription = "Dragaway needs Accessibility access to detect when you drag files.";
@@ -421,6 +432,7 @@
 				ENABLE_HARDENED_RUNTIME = YES;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = MacNotchAI/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = Dragaway;
 				INFOPLIST_KEY_LSUIElement = YES;
 				INFOPLIST_KEY_NSAccessibilityUsageDescription = "Dragaway needs Accessibility access to detect when you drag files.";

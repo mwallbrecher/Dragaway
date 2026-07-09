@@ -155,6 +155,17 @@
 
 ## Xcode / Build
 
+### [SPARKLE-01] Appcast signing depends on SUPublicEDKey in the built app, not just project build settings
+- **Mistake**: `INFOPLIST_KEY_SUPublicEDKey` existed in `project.pbxproj`, but the target also pointed
+  `INFOPLIST_FILE` at a physical `MacNotchAI/Info.plist` that only contained `SUFeedURL`. The exported
+  app therefore had no `SUPublicEDKey`, so `generate_appcast` treated the update as not requiring EdDSA
+  signing and emitted an unsigned enclosure even though the private key was present in Keychain.
+- **Fix**: put `SUPublicEDKey` in the actual app Info.plist that Xcode processes, and make
+  `scripts/release.sh` fail immediately if the exported app lacks `SUPublicEDKey` or the generated
+  appcast entry for the current DMG lacks `edSignature`.
+- **Rule**: for Sparkle, verify the built/exported `.app/Contents/Info.plist`, not only Xcode build
+  settings. `generate_appcast` signs only when the update bundle advertises `SUPublicEDKey`.
+
 ### [BUILD-01] INFOPLIST_KEY_* must be added to project.pbxproj with exact tab indentation
 - **Mistake**: Used space indentation in Edit tool when the file uses tabs → string not found
 - **Fix**: Use Python script with exact `\t` characters to insert keys

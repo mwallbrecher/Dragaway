@@ -8,7 +8,7 @@
             <sparkle:version>4</sparkle:version>
             <sparkle:shortVersionString>1.1.1</sparkle:shortVersionString>
             <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
-            <enclosure url="https://github.com/mwallbrecher/Dragaway/releases/download/v1.1.1/Dragaway-1.1.1.dmg" sparkle:edSignature="hafrttfSMbWjO+HpaZ5I+c6JllapNrCnaZHh4wkTSTNgWkXwvwFS/gPXU0sPZO1H1hnRUgh//fOXKmH73WLABQ==" length="3753050" type="application/octet-stream"/>
+            <enclosure url="https://github.com/mwallbrecher/Dragaway/releases/download/v1.1.1/Dragaway-1.1.1.dmg" length="3755647" type="application/octet-stream" sparkle:edSignature="avokYlM+kSdEKSBMHVNCxlbt0JolDh2wdwRrluFCTKQbAL+gDf7mcf0wt7oyCMwx3tbR8I+o5T+zUX3BmqJbAQ=="/>
         </item>
         <item>
             <title>1.1</title>
