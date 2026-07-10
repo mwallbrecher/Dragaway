@@ -151,6 +151,22 @@
 - **Fix**: read absolute `NSEvent.mouseLocation` (screen coords, y-up) and accumulate `start + (mouse - anchor)`; deliver the offset synchronously (no `.receive(on:)`) and `setFrameOrigin` in the same tick.
 - **Rule**: window-follows-cursor must track an absolute reference and move synchronously; never measure window motion in a coordinate space that moves with the window.
 
+### [DRAG-05] Safari tab drags may never discover a destination window shown after drag start
+- **Symptom**: the global drag pasteboard monitor sees a Safari tab and shows the pill, but the pill
+  never hovers and cannot accept the drop. Adding every declared Safari URL/file-promise type does not
+  help.
+- **Root cause evidence**: diagnostics show Safari's full payload (`public.url`,
+  `WebURLsWithTitlesPboardType`, promise types, `com.apple.safari.tab`) at the global monitor but no
+  subsequent `draggingEntered`; Finder produces both lines. The failure is therefore destination
+  discovery, before payload parsing, promise receipt, or `performDragOperation`.
+- **Fix**: cache the HTTP(S) URL from `NSPasteboard(name: .drag)` at drag recognition. Until AppKit
+  calls `draggingEntered`, use the common-mode button poll plus `NSEvent.mouseLocation` and the pill's
+  converted screen-space target rect to drive hover and commit on release. The first real
+  `draggingEntered` permanently disarms the fallback for that gesture so a drop cannot fire twice.
+- **Rule**: when a drag target window is created mid-session, prove callback delivery before debugging
+  pasteboard flavours. If a source never sends `draggingEntered`, use a narrowly typed, cached payload
+  fallback with explicit AppKit ownership handoff; never weaken the stale-pasteboard guards.
+
 ---
 
 ## Xcode / Build

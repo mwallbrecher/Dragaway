@@ -78,6 +78,9 @@ final class DroppableHostingView: NSHostingView<OverlayView> {
     var wantsPeriodicDraggingUpdates: Bool { false }
 
     override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
+        // If AppKit reached us, it owns this gesture. Disarm the global Safari
+        // release fallback before reading any payload so one drag cannot commit twice.
+        DragMonitor.shared.appKitDragEntered()
 #if DEBUG
         dragDiag("ENTERED types: "
             + (sender.draggingPasteboard.types ?? []).map(\.rawValue).joined(separator: " | "))
@@ -275,9 +278,6 @@ final class DroppableHostingView: NSHostingView<OverlayView> {
         // (AppKit y=0 is at the BOTTOM, so bottom edge = bounds.height − 68).
         // Both the canvas and the pill content scale by the same multiplier, so
         // the margins stay proportional and the formula stays the same with `s`.
-        let s = UIScale(rawValue: UserDefaults.standard.string(forKey: "uiScale") ?? "")?.multiplier ?? 1.0
-        let pillW = 240 * s
-        let pillH =  68 * s
         // NSHostingView.isFlipped == true: y=0 is at the VISUAL top of the view.
         // convert(_:from:nil) maps from the non-flipped window base system into this
         // flipped space, so "top of pill" → small y, "bottom of pill" → larger y.
@@ -285,10 +285,33 @@ final class DroppableHostingView: NSHostingView<OverlayView> {
         // (where the pill sits) and covers the full 240×68 pill area.
         // The 28pt transparent strip BELOW the pill has y > pillH in flipped coords
         // and is therefore excluded, which is the intended behaviour.
-        let pillRect = NSRect(x: (bounds.width - pillW) / 2,
-                              y: 0,
-                              width: pillW, height: pillH)
-        return pillRect.contains(loc)
+        return dropTargetRect.contains(loc)
+    }
+
+    /// True when a global AppKit screen point is over the visible drop target.
+    /// Used only for browser drags whose source never discovers this late-created
+    /// NSDraggingDestination. Normal drags continue through isOverPillArea(_:).
+    static func isScreenPointOverDropTarget(_ point: NSPoint) -> Bool {
+        screenDropTargetFrame()?.contains(point) == true
+    }
+
+    /// Current drop target in global AppKit screen coordinates.
+    static func screenDropTargetFrame() -> NSRect? {
+        guard let view = NSApp.windows
+            .compactMap({ $0.contentView as? DroppableHostingView })
+            .first(where: { $0.window?.isVisible == true }),
+              let window = view.window else { return nil }
+        let inWindow = view.convert(view.dropTargetRect, to: nil)
+        return window.convertToScreen(inWindow)
+    }
+
+    /// Stage 1 accepts only the visible 240×68 pill; later stages accept the card.
+    private var dropTargetRect: NSRect {
+        guard case .waitingForDrop = OverlayViewModel.shared.stage else { return bounds }
+        let s = UIScale(rawValue: UserDefaults.standard.string(forKey: "uiScale") ?? "")?.multiplier ?? 1.0
+        let pillW = 240 * s
+        let pillH =  68 * s
+        return NSRect(x: (bounds.width - pillW) / 2, y: 0, width: pillW, height: pillH)
     }
 
     // MARK: - Helper

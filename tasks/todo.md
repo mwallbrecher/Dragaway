@@ -1889,3 +1889,22 @@ each row, and shuffle the demo rows with the same replay seed so the card does n
 - [x] Move the automatic tab advance before the replay window fade so the selection pill visibly slides.
 - [x] Use the same thumb push/squash impulse for automatic tab changes as for manual clicks.
 - [x] Cache-bust touched website assets and verify syntax/browser state.
+
+## Safari/browser tab drop fallback (DONE 2026-07-10)
+
+**Goal:** allow Safari and browser tabs to hover and open a Dragaway session even when the browser's
+drag session never discovers the notch window that appears after the drag has already started. Keep
+the normal `NSDraggingDestination` path authoritative for Finder and every source that already works.
+
+- [x] **Fallback capture** — cache a browser drag's HTTP(S) URL from the global drag pasteboard when
+      `DragMonitor` first recognizes the session; do not write a Drops file until a confirmed release.
+- [x] **Fallback hover** — while AppKit has not entered `DroppableHostingView`, derive hover from the
+      global mouse position and the visible pill's real screen-space target rectangle.
+- [x] **Fallback commit** — on physical mouse release over the pill, materialize the cached URL and
+      open/add it through the existing session flow; disarm when AppKit takes ownership so one gesture
+      can never produce two drops.
+- [x] **Lifecycle safety** — clear fallback state on exit/cancel/space changes and preserve the existing
+      pasteboard stale guards, deferred stage transitions, window reuse, and Finder behavior.
+- [x] **Verify** — build Debug; retain Finder's proven `draggingEntered` path; exercise repeated real
+      Safari-tab drags through fallback hover/drop; confirm the materialized page file, enriched content,
+      and live chips-stage window; inspect cancel/duplicate-drop guards and pass `git diff --check`.

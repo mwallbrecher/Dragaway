@@ -1,5 +1,6 @@
 import AppKit
 import Combine
+import SwiftUI
 
 /// DEBUG drag diagnostics → /tmp/dragaway_diag.txt (unified log proved unreliable).
 func dragDiag(_ s: String) {
@@ -17,9 +18,9 @@ func dragDiag(_ s: String) {
 #endif
 }
 
-/// Watches for file drags anywhere on screen.
-/// Only publishes `isDraggingFile`; the actual stage transition (Stage 1 → 2)
-/// is handled by DroppableHostingView via NSDraggingDestination.
+/// Watches for droppable drags anywhere on screen. Normal stage transitions are
+/// handled by DroppableHostingView; browser tabs additionally use the bounded
+/// late-window fallback below when AppKit never discovers the new destination.
 @MainActor
 class DragMonitor: ObservableObject {
     static let shared = DragMonitor()
@@ -54,6 +55,19 @@ class DragMonitor: ObservableObject {
     private var pressTimeChangeCount: Int = NSPasteboard(name: .drag).changeCount
     private var mouseDownMonitor: Any?
 
+    // ── Late-window browser fallback ─────────────────────────────────────────
+    // Safari snapshots eligible destination windows when its tab drag begins. The
+    // notch pill is ordered front only AFTER the global monitor sees that drag, so
+    // Safari can keep ignoring its perfectly valid NSDraggingDestination forever:
+    // no draggingEntered, no hover, no performDragOperation. Cache the URL while
+    // the drag pasteboard is readable and, only when AppKit never takes ownership,
+    // derive hover/drop from the physical cursor + button state instead.
+    private var fallbackWebURL: URL?
+    private var appKitOwnsCurrentDrag = false
+#if DEBUG
+    private var didLogFallbackGeometry = false
+#endif
+
     private init() {}
 
     func startMonitoring() {
@@ -68,7 +82,9 @@ class DragMonitor: ObservableObject {
         // down — before any drag source has had a chance to write new data.
         mouseDownMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown]) { _ in
             MainActor.assumeIsolated {
-                DragMonitor.shared.pressTimeChangeCount = NSPasteboard(name: .drag).changeCount
+                let monitor = DragMonitor.shared
+                monitor.clearBrowserFallback()
+                monitor.pressTimeChangeCount = NSPasteboard(name: .drag).changeCount
             }
         }
 
@@ -93,12 +109,29 @@ class DragMonitor: ObservableObject {
         mouseUpMonitor   = nil
         mouseDownMonitor = nil
         stopPolling()
+        clearBrowserFallback()
+    }
+
+    /// Called as soon as the real NSDraggingDestination receives draggingEntered.
+    /// From that moment AppKit is authoritative for the whole gesture, including a
+    /// later exit/re-entry, so the release fallback must never create a second drop.
+    func appKitDragEntered() {
+        appKitOwnsCurrentDrag = true
+        fallbackWebURL = nil
+    }
+
+    /// The overlay was explicitly dismissed (notably via Escape) while a drag was
+    /// still live. Keep the normal drag watchdog running, but make a later mouse-up
+    /// incapable of reviving the hidden pill as a browser drop.
+    func cancelBrowserFallback() {
+        clearBrowserFallback()
     }
 
     /// Called by DroppableHostingView immediately after a successful drop.
     func dragCompleted() {
         isDraggingFile = false
         stopPolling()
+        clearBrowserFallback()
     }
 
     /// Called when the user switches Mission Control spaces.
@@ -120,6 +153,7 @@ class DragMonitor: ObservableObject {
         }
         isDraggingFile = false
         stopPolling()
+        clearBrowserFallback()
         lastDragChangeCount  = count
         pressTimeChangeCount = count
     }
@@ -155,6 +189,15 @@ class DragMonitor: ObservableObject {
         }
 #endif
         if hasDrag, !isDraggingFile, !RadialLauncherController.shared.isActive {
+            // Cache only a genuine HTTP(S) URL. Normal files keep using the proven
+            // AppKit destination path and therefore cannot enter this fallback.
+            fallbackWebURL = DropMaterializer.webURL(on: pb)
+            appKitOwnsCurrentDrag = false
+#if DEBUG
+            if let fallbackWebURL {
+                dragDiag("FALLBACK ARMED url=\(fallbackWebURL.absoluteString)")
+            }
+#endif
             let hk = HotkeyManager.shared
 
             // Each drag mode (notch pill, radial launcher) has an OPTIONAL trigger
@@ -194,12 +237,15 @@ class DragMonitor: ObservableObject {
         } else if !hasDrag {
             isDraggingFile = false
             stopPolling()
+            clearBrowserFallback()
         }
     }
 
     private func handleMouseUp() {
+        if commitBrowserFallbackIfPossible() { return }
         isDraggingFile = false
         stopPolling()
+        clearBrowserFallback()
     }
 
     // MARK: - Private – drag-end polling
@@ -214,10 +260,26 @@ class DragMonitor: ObservableObject {
             guard let self else { return }
             // Timer fires on the main runloop; MainActor.assumeIsolated is safe.
             MainActor.assumeIsolated {
+                let buttonIsDown = NSEvent.pressedMouseButtons & 1 != 0
+
+                // Safari may never send draggingEntered to a window that appeared
+                // after its tab drag began. Drive the jelly directly until AppKit
+                // proves it owns this gesture.
+                if self.fallbackWebURL != nil, !self.appKitOwnsCurrentDrag {
+                    self.updateBrowserFallbackHover()
+                    if !buttonIsDown, self.commitBrowserFallbackIfPossible() { return }
+                }
+
                 // Fast path: the source app cleared the drag pasteboard (files do this).
                 if !self.hasDroppable(on: NSPasteboard(name: .drag)) {
+                    // A cached browser URL remains valid even if its source clears the
+                    // live pasteboard just before mouse-up. While still pressed, keep
+                    // tracking it; on release the commit attempt above is definitive.
+                    if buttonIsDown, self.fallbackWebURL != nil,
+                       !self.appKitOwnsCurrentDrag { return }
                     self.isDraggingFile = false
                     self.stopPolling()
+                    self.clearBrowserFallback()
                     return
                 }
                 // WATCHDOG — text/URL/tab drags often leave STALE content on the drag
@@ -228,11 +290,12 @@ class DragMonitor: ObservableObject {
                 // outlive the press. Three consecutive button-up ticks (~0.3 s grace,
                 // so a caught drop's dragCompleted() wins first) ⇒ the drag is over,
                 // whatever the pasteboard claims.
-                if NSEvent.pressedMouseButtons & 1 == 0 {
+                if !buttonIsDown {
                     buttonUpTicks += 1
                     if buttonUpTicks >= 3 {
                         self.isDraggingFile = false
                         self.stopPolling()
+                        self.clearBrowserFallback()
                     }
                 } else {
                     buttonUpTicks = 0
@@ -249,6 +312,62 @@ class DragMonitor: ObservableObject {
         // Snapshot the current changeCount so the next identical pasteboard state
         // (stale data from this drag) doesn't re-trigger handleDrag.
         lastDragChangeCount = NSPasteboard(name: .drag).changeCount
+    }
+
+    // MARK: - Private – browser fallback
+
+    private func updateBrowserFallbackHover() {
+        guard !appKitOwnsCurrentDrag, fallbackWebURL != nil else { return }
+        let point = NSEvent.mouseLocation
+        let frame = DroppableHostingView.screenDropTargetFrame()
+#if DEBUG
+        if !didLogFallbackGeometry {
+            didLogFallbackGeometry = true
+            dragDiag("FALLBACK GEOMETRY mouse=\(point) target=\(String(describing: frame))")
+        }
+#endif
+        let hovering = frame?.contains(point) == true
+        guard OverlayViewModel.shared.isDragHovering != hovering else { return }
+        OverlayViewModel.shared.isDragHovering = hovering
+    }
+
+    /// Returns true only when this call consumed the browser gesture as a drop.
+    private func commitBrowserFallbackIfPossible() -> Bool {
+        guard !appKitOwnsCurrentDrag,
+              let link = fallbackWebURL,
+              isDraggingFile,
+              DroppableHostingView.isScreenPointOverDropTarget(NSEvent.mouseLocation),
+              let file = DropMaterializer.materialize(.webURL(link)) else { return false }
+
+#if DEBUG
+        dragDiag("FALLBACK DROP url=\(link.absoluteString)")
+#endif
+        isDraggingFile = false
+        stopPolling()
+        clearBrowserFallback()
+
+        // Stage mutations are deferred one runloop tick, matching the overlay's
+        // constraint-safety invariant and letting Safari finish its drag teardown.
+        DispatchQueue.main.async {
+            let vm = OverlayViewModel.shared
+            if case .waitingForDrop = vm.stage {
+                NotificationCenter.default.post(name: .radialOpenSession, object: [file])
+            } else {
+                withAnimation(.spring(response: 0.36, dampingFraction: 1.0)) {
+                    vm.pendingDroppedURLs = [file]
+                }
+            }
+        }
+        return true
+    }
+
+    private func clearBrowserFallback() {
+        fallbackWebURL = nil
+        appKitOwnsCurrentDrag = false
+#if DEBUG
+        didLogFallbackGeometry = false
+#endif
+        OverlayViewModel.shared.isDragHovering = false
     }
 
     // MARK: - Private – pasteboard inspection

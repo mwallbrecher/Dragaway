@@ -1363,6 +1363,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     func hideOverlay() {
         guard overlayWindow != nil else { return }   // already hidden — no double-dismiss
+        DragMonitor.shared.cancelBrowserFallback()
         stopDismissMonitors()
 
         // ── Partial reset (flags only, stage intact) ──────────────────────────

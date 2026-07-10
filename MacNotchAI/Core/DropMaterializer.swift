@@ -163,7 +163,10 @@ enum DropMaterializer {
 
     // MARK: - Internals
 
-    private nonisolated static func webURL(on pb: NSPasteboard) -> URL? {
+    /// Best HTTP(S) URL offered by a browser-style drag. Internal so the global
+    /// drag fallback can cache the URL before a late-created AppKit destination
+    /// has had a chance to enter the drag session.
+    nonisolated static func webURL(on pb: NSPasteboard) -> URL? {
         // Non-file URL flavour (public.url) — readObjects without fileURLsOnly.
         if let urls = pb.readObjects(forClasses: [NSURL.self], options: [:]) as? [URL],
            let first = urls.first(where: { $0.scheme == "http" || $0.scheme == "https" }) {
