@@ -196,6 +196,10 @@ class OverlayViewModel: ObservableObject {
     }
 
     @Published var isDragHovering = false
+    /// True while the immortal overlay window is un-parked (visible). The window now
+    /// lives forever (drag-snapshot fix), so the pill's entry animation replays off
+    /// this flag instead of .onAppear — see OverlayView.onChange(of: windowShown).
+    @Published var windowShown = false
     // True when the current result was produced from content cut to fit the
     // extractor's char/page cap. Drives the "analysed the first part" hint.
     @Published var contentTruncated = false

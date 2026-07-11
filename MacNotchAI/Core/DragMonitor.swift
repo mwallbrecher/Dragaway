@@ -64,6 +64,10 @@ class DragMonitor: ObservableObject {
     // derive hover/drop from the physical cursor + button state instead.
     private var fallbackWebURL: URL?
     private var appKitOwnsCurrentDrag = false
+    /// Last moment the fallback hover was ON the pill. Diag showed users reliably
+    /// touching the pill, then releasing 40–50pt below it — the exact 240×68 zone is
+    /// too unforgiving for a tab drag. A recent hover keeps the release committable.
+    private var lastFallbackHoverAt: Date = .distantPast
 #if DEBUG
     private var didLogFallbackGeometry = false
 #endif
@@ -124,6 +128,9 @@ class DragMonitor: ObservableObject {
     /// still live. Keep the normal drag watchdog running, but make a later mouse-up
     /// incapable of reviving the hidden pill as a browser drop.
     func cancelBrowserFallback() {
+#if DEBUG
+        if fallbackWebURL != nil { dragDiag("FALLBACK CANCELLED by hideOverlay (mid-drag!)") }
+#endif
         clearBrowserFallback()
     }
 
@@ -327,16 +334,39 @@ class DragMonitor: ObservableObject {
         }
 #endif
         let hovering = frame?.contains(point) == true
+        if hovering { lastFallbackHoverAt = Date() }
         guard OverlayViewModel.shared.isDragHovering != hovering else { return }
+#if DEBUG
+        dragDiag("FALLBACK HOVER \(hovering) mouse=\(point)")
+#endif
         OverlayViewModel.shared.isDragHovering = hovering
+    }
+
+    /// Forgiving commit test: the pill frame padded generously (±70pt sideways,
+    /// 90pt below — above is the screen edge anyway), OR the cursor touched the
+    /// pill within the last 0.4s. Tab drags carry a large preview under the cursor;
+    /// demanding a pixel-exact release lost real drops (see diag 21:27).
+    private func isReleaseNearTarget(_ point: NSPoint) -> Bool {
+        if Date().timeIntervalSince(lastFallbackHoverAt) < 0.4 { return true }
+        guard var f = DroppableHostingView.screenDropTargetFrame() else { return false }
+        f = NSRect(x: f.minX - 70, y: f.minY - 90,
+                   width: f.width + 140, height: f.height + 90 + 40)
+        return f.contains(point)
     }
 
     /// Returns true only when this call consumed the browser gesture as a drop.
     private func commitBrowserFallbackIfPossible() -> Bool {
+#if DEBUG
+        // Name the guard that kills a commit attempt — blind guessing wasted a day.
+        if fallbackWebURL != nil || appKitOwnsCurrentDrag {
+            let over = isReleaseNearTarget(NSEvent.mouseLocation)
+            dragDiag("FALLBACK COMMIT? appKitOwns=\(appKitOwnsCurrentDrag) url=\(fallbackWebURL != nil) dragging=\(isDraggingFile) nearTarget=\(over) mouse=\(NSEvent.mouseLocation)")
+        }
+#endif
         guard !appKitOwnsCurrentDrag,
               let link = fallbackWebURL,
               isDraggingFile,
-              DroppableHostingView.isScreenPointOverDropTarget(NSEvent.mouseLocation),
+              isReleaseNearTarget(NSEvent.mouseLocation),
               let file = DropMaterializer.materialize(.webURL(link)) else { return false }
 
 #if DEBUG
@@ -364,6 +394,7 @@ class DragMonitor: ObservableObject {
     private func clearBrowserFallback() {
         fallbackWebURL = nil
         appKitOwnsCurrentDrag = false
+        lastFallbackHoverAt = .distantPast
 #if DEBUG
         didLogFallbackGeometry = false
 #endif

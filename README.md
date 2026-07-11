@@ -10,6 +10,12 @@ Dragaway (fka AI-Drop) is a native macOS menu-bar app that turns your physical n
 
 ---
 
+## What's New in v1.1.2
+
+- **Drop Safari (and other non-Chromium) browser tabs into Dragaway** — dragging a tab from Safari, or any non-Chromium browser, now lands in the pill like a file or link. Chromium browsers (Chrome, Edge, Arc, Brave) already worked; this closes the gap for the rest.
+
+---
+
 ## What's New in v1.1.1
 
 - Dragaway now supports assets beyond just files. You can drag. and drop literally anything. Files, Safari tabs, Selections and more

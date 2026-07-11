@@ -46,9 +46,45 @@ class OverlayWindow: NSPanel {
     // MARK: - Show / hide
 
     func show() {
+        alphaValue = 1                    // also revives a PARKED window
+        OverlayViewModel.shared.windowShown = true
         guard !isVisible else { return }
-        alphaValue = 1
         orderFront(nil)
+    }
+
+    // MARK: - Persistent parking (drag-snapshot fix)
+    //
+    // Drag sources like Safari enumerate the eligible destination windows when THEIR
+    // drag begins — a window created mid-drag never receives draggingEntered, however
+    // correct its registered types are. So the overlay window is created once at app
+    // launch and, when "hidden", is PARKED instead of ordered out: alpha 0, shrunk to
+    // a strip inside the physical notch housing (nothing clickable lives there, so the
+    // invisible window can't steal clicks or menu-bar drags). Being ordered-in since
+    // before any drag starts makes it part of every source's destination snapshot.
+    func park() {
+        OverlayViewModel.shared.windowShown = false
+        // NOT 0: fully transparent windows are excluded from the window server's
+        // drag-destination candidates (verified: Safari's tab-drag snapshot never
+        // delivered draggingEntered at alpha 0). 0.01 sits inside the black notch
+        // housing and is invisible to the eye but real to the drag system.
+        alphaValue = 0.01
+        setFrame(Self.parkedFrame(), display: false)
+#if DEBUG
+        dragDiag("PARK frame=\(frame) visible=\(isVisible)")
+#endif
+    }
+
+    static func parkedFrame() -> NSRect {
+        guard let screen = NSScreen.main ?? NSScreen.screens.first else {
+            return NSRect(x: 0, y: 0, width: 2, height: 2)
+        }
+        // Notch housing height when present (safe-area top); 2pt sliver otherwise.
+        let inset = screen.safeAreaInsets.top
+        let h: CGFloat = inset > 1 ? inset : 2
+        let w: CGFloat = 160
+        return NSRect(x: screen.frame.midX - w / 2,
+                      y: screen.frame.maxY - h,
+                      width: w, height: h)
     }
 
     /// Fade the window to alpha 0 over 0.14 s, then call `completion`.

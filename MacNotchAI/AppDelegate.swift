@@ -59,6 +59,11 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         prewarmSwiftUI()
         setupStatusItem()
 
+        // Create the overlay window ONCE and keep it parked (invisible, inside the
+        // notch housing). Drag sources snapshot eligible destinations when their drag
+        // BEGINS — only a window that already existed can receive Safari-tab drops.
+        createParkedOverlay()
+
         // Auto-update (Sparkle). Instantiating starts the scheduled background check.
         _ = UpdaterController.shared
 
@@ -228,6 +233,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         OverlayViewModel.shared.setChips(urls: supported)
         let (size, anchorLeft) = sizeForStage(OverlayViewModel.shared.stage)
         overlayWindow?.alphaValue = 1
+        OverlayViewModel.shared.windowShown = true
         overlayWindow?.place(size: size, anchorAtNotchCenter: anchorLeft)
         // Grab key + activate so the card opens FOCUSED (type right away). Losing focus
         // later is fine — the overlay stays vivid via the forced controlActiveState.
@@ -863,6 +869,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         vm.applySnapshot(snap)
         let (size, anchorLeft) = sizeForStage(snap.stage)
         overlayWindow?.alphaValue = 1
+        OverlayViewModel.shared.windowShown = true
         overlayWindow?.place(size: size, anchorAtNotchCenter: anchorLeft)
         overlayWindow?.makeKeyAndOrderFront(nil)   // reopen a session focused
         NSApp.activate(ignoringOtherApps: true)
@@ -1308,6 +1315,20 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
     }
 
+    /// Build the overlay window once at launch and park it invisibly in the notch
+    /// housing. From then on show/hide only toggles alpha + frame — the window itself
+    /// is immortal, so every drag source's destination snapshot includes it.
+    private func createParkedOverlay() {
+        guard overlayWindow == nil else { return }
+        let window = OverlayWindow()
+        window.contentView = DroppableHostingView(
+            rootView: OverlayView(provider: resolveProvider())
+        )
+        window.park()
+        window.orderFrontRegardless()   // ordered-in (invisible at alpha 0)
+        overlayWindow = window
+    }
+
     private func ensureOverlayVisible() {
         let s = UIScale.current.multiplier
         let pillSize = CGSize(width: 288 * s, height: 96 * s)
@@ -1325,8 +1346,12 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             isWindowDismissing = false     // ← unblocks resizeOverlay()
             win.alphaValue     = 1
             OverlayViewModel.shared.reset()   // ← stage → .waitingForDrop before orderFront
+            OverlayViewModel.shared.windowShown = true   // replay the pill pop-in
             win.place(size: pillSize, anchorAtNotchCenter: false)
             win.orderFront(nil)
+#if DEBUG
+            dragDiag("UNPARK frame=\(win.frame) alpha=\(win.alphaValue) visible=\(win.isVisible) key=\(win.isKeyWindow)")
+#endif
             startDismissMonitors()
             return
         }
@@ -1362,7 +1387,11 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     func hideOverlay() {
-        guard overlayWindow != nil else { return }   // already hidden — no double-dismiss
+        // The window is immortal now (parked, never nil), so the old `!= nil` guard
+        // stopped blocking repeat dismissals — every stray mouse-up re-ran the full
+        // dismiss (visible as PARK spam in the diag). windowShown restores the old
+        // "only while actually shown" semantics exactly.
+        guard overlayWindow != nil, OverlayViewModel.shared.windowShown else { return }
         DragMonitor.shared.cancelBrowserFallback()
         stopDismissMonitors()
 
@@ -1398,13 +1427,15 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.34) { [weak self] in
             guard let self, self.dismissToken == token else { return }
             self.isWindowDismissing = false
-            self.overlayWindow?.orderOut(nil)
-            self.overlayWindow = nil
+            // PARK instead of orderOut+destroy: the window must stay ordered-in so
+            // drag sources that snapshot their destinations at drag-start (Safari
+            // tabs) can still deliver future drops. See OverlayWindow.park().
+            self.overlayWindow?.park()
             // Full reset now: window is invisible so the stage flip is silent.
             OverlayViewModel.shared.reset()   // also sets isCollapsing = false
         }
-        // NOTE: overlayWindow is intentionally NOT nilled here.
-        // ensureOverlayVisible() checks for an existing window and reuses it.
+        // NOTE: overlayWindow is NEVER nilled — it lives (parked) for the whole app
+        // lifetime; ensureOverlayVisible()'s reuse path revives it.
     }
 
     // MARK: - Window sizing

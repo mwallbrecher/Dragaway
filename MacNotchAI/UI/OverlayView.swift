@@ -182,7 +182,18 @@ struct OverlayView: View {
         // Trigger entry animation. onAppear fires before the first committed frame
         // so SwiftUI batches the state change and the animation together — no Task
         // scheduling, no async race, no multi-phase timing.
-        .onAppear { appeared = true }
+        .onAppear { appeared = vm.windowShown }
+        // Replay the pop-in every time the immortal window is un-parked. The window
+        // (and this view) now live for the whole app lifetime — .onAppear fires
+        // exactly once ever, so the entry spring must key off windowShown instead.
+        .onChange(of: vm.windowShown, initial: false) { _, shown in
+            if shown {
+                appeared = false                       // reset silently…
+                DispatchQueue.main.async { appeared = true }   // …then spring in
+            } else {
+                appeared = false
+            }
+        }
     }
 }
 

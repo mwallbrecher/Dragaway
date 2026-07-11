@@ -28,6 +28,11 @@ build/
 *.dmg
 # build_release.log and other transient build logs
 *.log
+# editor / script backups
+*.bak
+
+# ── graphify knowledge-graph output (local analysis artefact, not source) ──────
+graphify-out/
 
 # ── Marketing website (separate deliverable, lives beside the app but is NOT
 #    part of the macOS build — kept out of the app repo history) ─────────────
