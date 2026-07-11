@@ -6,7 +6,7 @@ released app. See `docs/GIT_WORKFLOW.md` for the rules that keep it that way.
 
 - **Author:** Moritz Wallbrecher
 - **Integration branch:** `thesis` (branched from `main` at Dragaway v1.1.3 — the released app)
-- **Draft PR:** _(opening now — link added below)_
+- **Draft PR:** https://github.com/mwallbrecher/Dragaway/pull/1 (`thesis` → `main`, keep as draft until done)
 - **Status:** active — thesis work has started.
 - **Every thesis commit carries the trailer** `Thesis-Component: <name>` so it can be extracted
   mechanically at any time:
