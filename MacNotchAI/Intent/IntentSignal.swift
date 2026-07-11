@@ -17,7 +17,7 @@ import Combine
 // MARK: - Event model
 
 enum SignalKind: String, Codable {
-    case clipboard, appFocus, scrollBurst, dwell
+    case clipboard, appFocus, scrollBurst, dwell, selection
 }
 
 /// A copy/cut landed on the general pasteboard. Content is classified and discarded.
@@ -40,6 +40,30 @@ struct ClipboardPayload: Codable {
     let sourceApp: String?
     /// Lowercased path extensions when contentClass == "files".
     let fileExtensions: [String]?
+    /// On-device sentence embedding (NLEmbedding), rounded — derived data, safe to
+    /// persist. Feeds the `topic_coherence` detector. nil when unavailable.
+    var embedding: [Double]? = nil
+}
+
+/// A text selection (or translator-context flip) read via the Accessibility API.
+/// M2, opt-in — the ONLY permission-gated sensor (ARCHITECTURE §3). Raw selection,
+/// window title, and document path are classified at capture and discarded.
+struct SelectionPayload: Codable {
+    let app: String?
+    let charCount: Int
+    let wordCount: Int
+    let language: String?
+    let langConfidence: Double?
+    let isForeignLanguage: Bool
+    let shape: String
+    /// Hash prefix of the selected text (repeat-selection detection).
+    let hashPrefix: String
+    /// Hash prefix of document path / window title — same-document identity
+    /// without storing the document. nil when the app exposes neither.
+    let docID: String?
+    /// Focused window looks like a translator (deepl/translate/dict…) — computed
+    /// from the title AT CAPTURE, title itself is discarded.
+    let isTranslatorContext: Bool
 }
 
 /// The frontmost application changed.
@@ -81,6 +105,7 @@ struct SignalEvent: Codable {
     var appFocus: AppFocusPayload? = nil
     var scroll: ScrollBurstPayload? = nil
     var dwell: DwellPayload? = nil
+    var selection: SelectionPayload? = nil
 }
 
 // MARK: - SignalBus
