@@ -14,7 +14,6 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var startupToastWindow: NSPanel?
     private var statusItem: NSStatusItem?         // menu-bar icon (replaces MenuBarExtra)
     private var cancellables = Set<AnyCancellable>()
-    private var escapeMonitor: Any?
     private var outsideClickMonitor: Any?
     /// Local keyDown monitor for the favorite-tool launch hotkeys (`Option+1…9`).
     /// Active only while a file is staged on the chips stage (Pillar 1).
@@ -48,7 +47,11 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     // MARK: - Launch
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        checkAccessibilityPermission()
+        // Dragaway requests NO permissions. Drag detection, hotkeys, and the radial
+        // launcher all use ungated APIs (drag-pasteboard polling, mouse monitors,
+        // Carbon hotkeys); Esc dismissal rides the responder chain
+        // (OverlayWindow.cancelOperation). Keep it that way — the last gated API
+        // (a global keyDown monitor) was removed deliberately.
         DragMonitor.shared.startMonitoring()
         observeDragState()
         observeDragOutState()
@@ -1534,11 +1537,11 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private func startDismissMonitors() {
         stopDismissMonitors()
 
-        escapeMonitor = NSEvent.addGlobalMonitorForEvents(matching: .keyDown) { [weak self] event in
-            if event.keyCode == 53 {
-                Task { @MainActor [weak self] in self?.hideOverlay() }
-            }
-        }
+        // Esc is handled by OverlayWindow.cancelOperation (responder chain, no
+        // permission). A global keyDown monitor could ALSO catch Esc while another
+        // app is frontmost, but global keyboard monitors require Accessibility —
+        // the only such requirement in the app — and the shelf is deliberately
+        // click-to-dismiss in that state, so the permission isn't worth it.
 
         outsideClickMonitor = NSEvent.addGlobalMonitorForEvents(matching: .leftMouseDown) { [weak self] event in
             Task { @MainActor [weak self] in
@@ -1555,7 +1558,6 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     private func stopDismissMonitors() {
-        if let m = escapeMonitor       { NSEvent.removeMonitor(m); escapeMonitor       = nil }
         if let m = outsideClickMonitor { NSEvent.removeMonitor(m); outsideClickMonitor = nil }
         stopToolHotkeys()   // never leave the Option+N monitor live past a dismiss
     }
@@ -1716,27 +1718,6 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         NSApp.activate(ignoringOtherApps: true)
     }
 
-    // MARK: - Accessibility
-
-    func checkAccessibilityPermission() {
-        let trusted = AXIsProcessTrustedWithOptions(
-            [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary
-        )
-        if !trusted { showAccessibilityOnboarding() }
-    }
-
-    private func showAccessibilityOnboarding() {
-        let alert = NSAlert()
-        alert.messageText     = "One permission needed"
-        alert.informativeText = "Dragaway needs Accessibility access to detect when you drag files.\n\nOpen System Settings → Privacy & Security → Accessibility and enable Dragaway."
-        alert.addButton(withTitle: "Open System Settings")
-        alert.addButton(withTitle: "Later")
-        if alert.runModal() == .alertFirstButtonReturn {
-            NSWorkspace.shared.open(
-                URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")!
-            )
-        }
-    }
 }
 
 // MARK: - Notification names

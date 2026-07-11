@@ -181,7 +181,7 @@ struct SettingsView: View {
                     helpRow("⌥1 … ⌥9",   "Open the dropped file in a favorite app")
                     helpRow("Tab / ⇧Tab", "Cycle the session card's tabs")
                     helpRow("⇧ + drag",  "Radial launcher (change under Add Hotkey…)")
-                    helpRow("Esc",       "Dismiss the pill / close the card")
+                    helpRow("Esc",       "Close the card (while it has focus; while typing, first Esc leaves the field)")
                 }
                 .padding(.vertical, 4)
             }

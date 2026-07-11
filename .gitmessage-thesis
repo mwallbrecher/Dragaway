@@ -1,0 +1,8 @@
+# <type>(thesis): <short summary>   ← e.g. feat(thesis): add semantic drop router
+#
+# <why + what, wrapped ~72 cols>
+#
+# Every thesis commit MUST end with this trailer (see docs/GIT_WORKFLOW.md R3):
+Thesis-Component:
+#
+# Co-Authored-By: ... (add when pair/AI-assisted)

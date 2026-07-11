@@ -6,6 +6,14 @@ code in this repository. It is the single source of truth — there is no separa
 > The original "build-from-scratch" master brief was moved to `docs/ORIGINAL_BRIEF.md`.
 > It is historical — the shipping app has diverged significantly from it. Trust the code, not the brief.
 
+> ## ⛔ Git workflow is MANDATORY — read `docs/GIT_WORKFLOW.md` before ANY commit
+> This repo runs two parallel streams: `main` (the released app) and long-lived `thesis/*`
+> branches (graded master's-thesis work). The rules for which branch to use, how to sync
+> (**merge main in, never rebase**), how to tag thesis commits (`Thesis-Component:` trailer),
+> and how to integrate (**`--no-ff`, never squash**) are non-negotiable — breaking them
+> corrupts the academic attribution the university grades and cannot be undone. If a change
+> is thesis work, it does **not** go on `main`. When unsure, stop and ask.
+
 ---
 
 ## What this is
@@ -27,8 +35,11 @@ open MacNotchAI.xcodeproj
 
 - **No test target exists.** There is nothing to run for unit/UI tests; "verification" means building
   and exercising the app manually (drag a file, drop, run an action).
-- The app is **non-sandboxed** (`ENABLE_APP_SANDBOX = NO`) and requires **Accessibility permission**
-  for its global `NSEvent` monitors (Escape key, outside-click). First launch prompts for it.
+- The app is **non-sandboxed** (`ENABLE_APP_SANDBOX = NO`) so its global `NSEvent` *mouse*
+  monitors work. As of v1.1.3 it requests **no permissions at all** — drag detection, hotkeys,
+  and the radial launcher use ungated APIs, and Esc dismissal rides the window responder chain
+  (`OverlayWindow.cancelOperation`). Do **not** reintroduce Accessibility-gated APIs (global
+  keyboard monitors, AX tree access) without an explicit decision — see `tasks/lessons.md`.
 - `MACOSX_DEPLOYMENT_TARGET = 14.0`, Swift 5, hardened runtime on. The mic entitlement
   (`com.apple.security.device.audio-input`) in `MacNotchAI.entitlements` is mandatory for dictation.
 - Editing `project.pbxproj` programmatically: it is **tab-indented**. String edits with spaces will

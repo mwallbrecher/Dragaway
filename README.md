@@ -10,6 +10,12 @@ Dragaway (fka AI-Drop) is a native macOS menu-bar app that turns your physical n
 
 ---
 
+## What's New in v1.1.3
+
+- **No permissions needed** — Dragaway no longer requests Accessibility access. Drag detection, hotkeys, and the radial launcher all work out of the box; the app never appears in Privacy & Security. Esc still closes the focused card via the responder chain.
+
+---
+
 ## What's New in v1.1.2
 
 - **Drop Safari (and other non-Chromium) browser tabs into Dragaway** — dragging a tab from Safari, or any non-Chromium browser, now lands in the pill like a file or link. Chromium browsers (Chrome, Edge, Arc, Brave) already worked; this closes the gap for the rest.
@@ -84,7 +90,7 @@ Dragaway (fka AI-Drop) is a native macOS menu-bar app that turns your physical n
 4. On first launch, pick your AI provider and paste your API key
 5. Drag any file toward the top of your screen to get started
 
-> **Signed & notarized by Apple** — the DMG opens normally, no Gatekeeper workaround needed. macOS will still ask you to confirm Accessibility access on first launch (Dragaway uses it to detect file drags).
+> **Signed & notarized by Apple** — the DMG opens normally, no Gatekeeper workaround needed. Dragaway requests **no special permissions** — drag detection works out of the box, no Accessibility prompt, nothing to grant.
 
 ---
 
@@ -162,7 +168,7 @@ The built-in **free tier** runs through a hosted metering proxy — the host key
 - **macOS 14 Sonoma** or later
 - A Mac with a **notch** (MacBook Pro 14″ / 16″, MacBook Air M2+) — works on non-notch Macs too, pill appears at the top-center of the screen
 - **Xcode 15** or later to build from source
-- **Accessibility permission** — required for global drag detection (`NSEvent.addGlobalMonitorForEvents`)
+- **No permissions required** — drag detection, hotkeys, and the radial launcher all use ungated APIs (drag-pasteboard polling, global *mouse* monitors, Carbon hotkeys). Dragaway never appears in Privacy & Security.
 
 ---
 
@@ -180,7 +186,7 @@ open MacNotchAI.xcodeproj
 2. Choose **My Mac** as the run destination
 3. Press **⌘R** to build and run
 
-> The app is **not sandboxed** — this is required for `NSEvent` global mouse monitoring. You will see a prompt to grant Accessibility permission on first launch; the drag detection will not work without it.
+> The app is **not sandboxed** — this is required for `NSEvent` global mouse monitoring. There is no permission prompt at any point: drag detection works out of the box, and Esc dismissal rides the window's responder chain.
 
 ### First Launch
 

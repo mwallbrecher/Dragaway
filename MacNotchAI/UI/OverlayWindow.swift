@@ -27,8 +27,9 @@ class OverlayWindow: NSPanel {
     // QLPreviewPanel walks the key window's responder chain looking for a controller.
     // The overlay is `canBecomeKey`, so once it's made key (QuickLookController.present)
     // these hooks let the shared panel preview the dropped session files. The data source
-    // is the QuickLookController singleton. Esc inside the panel is delivered to OUR app,
-    // so the global Esc dismiss monitor doesn't fire — the panel closes, the session stays.
+    // is the QuickLookController singleton. Esc inside the panel is delivered to the
+    // PANEL's responder chain, not this window's — the panel closes, the session stays
+    // (cancelOperation below never fires for it).
 
     override func acceptsPreviewPanelControl(_ panel: QLPreviewPanel!) -> Bool { true }
 
@@ -41,6 +42,24 @@ class OverlayWindow: NSPanel {
     override func endPreviewPanelControl(_ panel: QLPreviewPanel!) {
         panel.dataSource = nil
         panel.delegate   = nil
+    }
+
+    // MARK: - Esc (responder chain — no Accessibility needed)
+    //
+    // Esc anywhere in the window bubbles up as cancelOperation once nothing closer
+    // consumed it (SwiftUI .onExitCommand handlers get first crack). This replaces
+    // the old GLOBAL keyDown monitor, which (a) required Accessibility — the app's
+    // only gated API — and (b) never fired in the common case anyway, because
+    // global monitors don't see your own app's events while the card has focus.
+    override func cancelOperation(_ sender: Any?) {
+        // Esc while typing should end editing, not nuke the session: first Esc
+        // drops focus, a second Esc (now unfocused) closes the card.
+        if let editor = firstResponder as? NSTextView, editor.isEditable {
+            makeFirstResponder(nil)
+            return
+        }
+        // Same path as the card's × button.
+        NotificationCenter.default.post(name: .hideOverlay, object: nil)
     }
 
     // MARK: - Show / hide
