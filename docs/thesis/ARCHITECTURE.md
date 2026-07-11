@@ -128,10 +128,13 @@ P(c|E) = σ(S_c) = 1/(1+e^−S_c)
 - **Explainability is built in**: each feature's contribution `w_i·f_i·decay` is an additive
   summand; the "why this suggestion?" popover is a printout of the score decomposition.
 
-**Worked example (Translation).** Prior −3.9; foreign-language clipboard (+2.2); switch toward
-a translator app within 10 s (+2.6); snippet-length band (+0.7) → S = +1.6 → P ≈ 0.83 → show
-(θ=0.70). Without the app switch: S = −1.0 → P ≈ 0.27 → **silence**. Earliness (suggesting on
-the copy alone) is **earned through personal evidence** (§9), never assumed.
+**Worked example (Translation), as implemented.** Prior −3.9; foreign-language clipboard
+(w 2.2 × confidence 0.9, decayed ≈ +1.9); switch toward a translator within 10 s (+3.0)
+→ S ≈ +1.0 → P ≈ 0.73 → show (θ=0.70). Foreign copy alone: P ≈ 0.12; translator switch alone:
+P ≈ 0.29 → **silence** either way. Earliness (suggesting on the copy alone) is **earned through
+personal evidence** (§9), never assumed. Calibration stance: translation signals are
+near-deterministic and fire readily; the noisier comprehension/discovery families need
+near-max combined evidence to speak unprompted and otherwise surface via the summon ticker.
 
 **Initial parameters** (from the formative-study taxonomy; provenance column required —
 every weight cites the observation that motivated it):

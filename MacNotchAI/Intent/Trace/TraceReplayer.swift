@@ -23,6 +23,9 @@ enum TraceReplayer {
         let countsPerKind: [String: Int]
         /// Trace span in seconds (first event → last event, event time).
         let duration: TimeInterval
+        /// Event time of the last event — pass this to the scorer after a replay
+        /// (wall clock would decay all replayed evidence to zero).
+        let lastEventTime: TimeInterval?
 
         var description: String {
             let kinds = countsPerKind.sorted { $0.key < $1.key }
@@ -62,6 +65,7 @@ enum TraceReplayer {
         }
         let duration = (events.last?.t ?? 0) - (events.first?.t ?? 0)
         return Summary(url: url, events: events.count, skippedLines: skipped,
-                       countsPerKind: counts, duration: max(duration, 0))
+                       countsPerKind: counts, duration: max(duration, 0),
+                       lastEventTime: events.last?.t)
     }
 }

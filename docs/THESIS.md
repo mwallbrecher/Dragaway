@@ -27,8 +27,8 @@ short-lived `thesis/<feature>` branch off `thesis`, merged back with `--no-ff`.
 | Component (`Thesis-Component:` value) | Description | Status | Key files |
 |---|---|---|---|
 | `infrastructure` | branch/PR/workflow scaffolding, architecture spec | ongoing | `docs/GIT_WORKFLOW.md`, `docs/thesis/ARCHITECTURE.md` |
-| `signal-capture` | L1 sensors (clipboard, app focus, dwell/scroll, AX), SignalBus, trace recording + replay harness | **in progress (M1)** | `MacNotchAI/Intent/` |
-| `intent-scoring` | L2 feature detectors + L3 log-linear Bayes scorer + L3b LLM disambiguator | planned (M2) | `MacNotchAI/Intent/` |
+| `signal-capture` | L1 sensors (clipboard, app focus, dwell/scroll, AX selection), SignalBus, trace recording + replay harness | **M1 done · M2 AX sensor added** | `MacNotchAI/Intent/` |
+| `intent-scoring` | L2 feature detectors (8) + L3 log-linear Bayes scorer with editable `IntentConfig`; LLM disambiguator pending (M4) | **in progress (M2 core done)** | `MacNotchAI/Intent/` |
 | `affordance-ui` | whisper pill (passive channel), summon ticker (active channel), policy + resolver | planned (M3) | — |
 | `personalization` | online weight learning, per-context prior offsets | planned (M4) | — |
 | `user-control` | sensitivity tiers, preference compiler (NL → config), onboarding | planned (M4) | — |

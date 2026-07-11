@@ -422,6 +422,19 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         record.state = recording ? .on : .off
         addItem(to: intentSub, title: "Replay Trace…", action: #selector(menuIntentReplay))
         addItem(to: intentSub, title: "Open Traces Folder", action: #selector(menuIntentOpenTraces))
+        intentSub.addItem(.separator())
+        addItem(to: intentSub, title: "Show Intent Scores", action: #selector(menuIntentScores))
+        let axOn = IntentEngine.shared.axSensorEnabled
+        let axTrusted = AXIsProcessTrusted()
+        let ax = addItem(to: intentSub,
+                         title: axOn && !axTrusted
+                            ? "Selection Sensor (grant Accessibility…)"
+                            : "Selection Sensor (Accessibility)",
+                         action: #selector(menuIntentAXSensor))
+        ax.state = (axOn && axTrusted) ? .on : .off
+        intentSub.addItem(.separator())
+        addItem(to: intentSub, title: "Open Intent Config", action: #selector(menuIntentOpenConfig))
+        addItem(to: intentSub, title: "Reload Intent Config", action: #selector(menuIntentReloadConfig))
         intentItem.submenu = intentSub
         menu.addItem(intentItem)
 #endif
@@ -1774,13 +1787,19 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // Quiesce the live pipeline first — live and replayed timelines must not mix.
         let wasRunning = IntentEngine.shared.isRunning
         IntentEngine.shared.stop()
+        IntentEngine.shared.resetPipeline()   // clean slate: score the trace alone
         defer { if wasRunning { IntentEngine.shared.start() } }
 
         let alert = NSAlert()
         do {
             let summary = try TraceReplayer.replay(url, into: IntentEngine.shared.bus)
             alert.messageText = "Trace replayed"
-            alert.informativeText = summary.description
+            // Golden-trace check in one glance: what would the scorer say at the
+            // end of this recorded session? (Scored at EVENT time, not wall clock.)
+            let scores = summary.lastEventTime.map {
+                "\n\nScores at trace end:\n" + IntentEngine.shared.scoresDescription(at: $0)
+            } ?? ""
+            alert.informativeText = summary.description + scores
         } catch {
             alert.messageText = "Replay failed"
             alert.informativeText = error.localizedDescription
@@ -1790,6 +1809,33 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     @objc private func menuIntentOpenTraces() {
         NSWorkspace.shared.open(TraceRecorder.tracesDirectory())
+    }
+
+    @objc private func menuIntentScores() {
+        let alert = NSAlert()
+        alert.messageText = "Intent scores (live)"
+        alert.informativeText = IntentEngine.shared.scoresDescription()
+        alert.runModal()
+    }
+
+    @objc private func menuIntentAXSensor() {
+        let engine = IntentEngine.shared
+        if engine.axSensorEnabled, !AXIsProcessTrusted() {
+            engine.requestAXPermission()      // enabled but not yet granted → (re)ask
+        } else if engine.axSensorEnabled {
+            engine.axSensorEnabled = false    // granted + on → turn off
+        } else {
+            engine.axSensorEnabled = true     // off → on (and ask if needed)
+            if !AXIsProcessTrusted() { engine.requestAXPermission() }
+        }
+    }
+
+    @objc private func menuIntentOpenConfig() {
+        NSWorkspace.shared.open(IntentConfig.fileURL())
+    }
+
+    @objc private func menuIntentReloadConfig() {
+        IntentEngine.shared.reloadConfig()
     }
 #endif
 
