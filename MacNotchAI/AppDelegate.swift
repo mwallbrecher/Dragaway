@@ -53,6 +53,12 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // (OverlayWindow.cancelOperation). Keep it that way — the last gated API
         // (a global keyDown monitor) was removed deliberately.
         DragMonitor.shared.startMonitoring()
+
+        // THESIS (Computational Intent Pipeline): passive signal capture — inert
+        // unless the research flag is set (Debug menu → Intent Engine, or
+        // `defaults write com.wallbrecher.dragaway intentEngineEnabled -bool YES`).
+        // M1 uses zero permissions. See docs/thesis/ARCHITECTURE.md.
+        IntentEngine.shared.startIfEnabled()
         observeDragState()
         observeDragOutState()
         observeStageChanges()
@@ -396,6 +402,29 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
         addItem(to: menu, title: "Help & Tutorial…", action: #selector(menuHelp))
         addItem(to: menu, title: "Send Feedback…", action: #selector(menuFeedback))
+
+#if DEBUG
+        // ── THESIS: Intent Engine controls (Debug builds only, thesis branch) ────
+        menu.addItem(.separator())
+        let intentItem = NSMenuItem(title: "Intent Engine (Thesis)", action: nil, keyEquivalent: "")
+        let intentSub = NSMenu()
+        let engineRunning = IntentEngine.shared.isRunning
+        let toggle = addItem(to: intentSub,
+                             title: engineRunning ? "Stop Signal Capture" : "Start Signal Capture",
+                             action: #selector(menuIntentToggle))
+        toggle.state = engineRunning ? .on : .off
+        let recording = IntentEngine.shared.recorder.isRecording
+        let record = addItem(to: intentSub,
+                             title: recording
+                                ? "Stop Recording (\(IntentEngine.shared.recorder.eventCount) events)"
+                                : "Record Trace",
+                             action: #selector(menuIntentRecord))
+        record.state = recording ? .on : .off
+        addItem(to: intentSub, title: "Replay Trace…", action: #selector(menuIntentReplay))
+        addItem(to: intentSub, title: "Open Traces Folder", action: #selector(menuIntentOpenTraces))
+        intentItem.submenu = intentSub
+        menu.addItem(intentItem)
+#endif
 
         menu.addItem(.separator())
 
@@ -1717,6 +1746,52 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         onboardingWindow?.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
     }
+
+#if DEBUG
+    // MARK: - THESIS: Intent Engine debug controls (docs/thesis/ARCHITECTURE.md)
+
+    @objc private func menuIntentToggle() {
+        IntentEngine.shared.isEnabled.toggle()   // setter starts/stops the live engine
+    }
+
+    @objc private func menuIntentRecord() {
+        let engine = IntentEngine.shared
+        if engine.recorder.isRecording {
+            engine.recorder.stop()
+        } else {
+            if !engine.isRunning { engine.isEnabled = true }
+            engine.recorder.start(bus: engine.bus)
+        }
+    }
+
+    @objc private func menuIntentReplay() {
+        let panel = NSOpenPanel()
+        panel.directoryURL = TraceRecorder.tracesDirectory()
+        panel.allowsMultipleSelection = false
+        panel.canChooseDirectories = false
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+
+        // Quiesce the live pipeline first — live and replayed timelines must not mix.
+        let wasRunning = IntentEngine.shared.isRunning
+        IntentEngine.shared.stop()
+        defer { if wasRunning { IntentEngine.shared.start() } }
+
+        let alert = NSAlert()
+        do {
+            let summary = try TraceReplayer.replay(url, into: IntentEngine.shared.bus)
+            alert.messageText = "Trace replayed"
+            alert.informativeText = summary.description
+        } catch {
+            alert.messageText = "Replay failed"
+            alert.informativeText = error.localizedDescription
+        }
+        alert.runModal()
+    }
+
+    @objc private func menuIntentOpenTraces() {
+        NSWorkspace.shared.open(TraceRecorder.tracesDirectory())
+    }
+#endif
 
 }
 
