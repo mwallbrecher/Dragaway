@@ -296,8 +296,14 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private func setupStatusItem() {
         let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
         if let button = item.button {
-            button.image = NSImage(systemSymbolName: "sparkles", accessibilityDescription: "Dragaway")
-            button.image?.isTemplate = true     // adapts to light/dark menu bar
+            // Menu-bar artwork is deliberately separate from AppIcon: macOS may apply
+            // Liquid Glass treatment to app icons, whereas this template keeps its
+            // transparent D cutout and outer corners as actual menu-bar transparency.
+            if let icon = NSImage(named: "MenuBarIcon")?.copy() as? NSImage {
+                icon.size = NSSize(width: 14, height: 14)
+                icon.isTemplate = true
+                button.image = icon
+            }
             button.target = self
             button.action = #selector(statusItemClicked(_:))
             button.sendAction(on: [.leftMouseUp, .rightMouseUp])
