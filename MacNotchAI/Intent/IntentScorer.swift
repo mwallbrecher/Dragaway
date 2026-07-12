@@ -75,18 +75,68 @@ struct IntentConfig: Codable {
         return dir.appendingPathComponent("IntentConfig.json")
     }
 
+    /// Field-wise validation with clamping. A hand-edited file can contain a
+    /// negative τ, an out-of-range threshold, an unknown tier, or (via "1e999")
+    /// infinities — none of that may reach the scorer, and none of it may destroy
+    /// the user's file. Corrections apply IN MEMORY only; the file stays untouched.
+    func validated() -> (config: IntentConfig, corrections: [String]) {
+        var c = self
+        var notes: [String] = []
+        if c.thresholds[c.tier] == nil {
+            notes.append("tier '\(c.tier)' unknown → balanced"); c.tier = "balanced"
+        }
+        if !c.basePriorLogOdds.isFinite || !(-10...2).contains(c.basePriorLogOdds) {
+            notes.append("basePriorLogOdds \(c.basePriorLogOdds) → -3.89")
+            c.basePriorLogOdds = -3.89
+        }
+        for (k, v) in c.weights where !v.isFinite || abs(v) > 4 {
+            let fixed = v.isFinite ? max(-4, min(4, v)) : (Self.defaultWeights[k] ?? 1)
+            notes.append("weight \(k)=\(v) → \(fixed)"); c.weights[k] = fixed
+        }
+        for (k, v) in c.taus where !v.isFinite || v <= 0 || v > 3600 {
+            let fixed = Self.defaultTaus[k] ?? 90
+            notes.append("tau \(k)=\(v) → \(fixed)"); c.taus[k] = fixed
+        }
+        for (k, v) in c.thresholds where !v.isFinite || !(0.01...0.99).contains(v) {
+            let fixed = k == "lazy" ? 0.85 : (k == "aggressive" ? 0.55 : 0.70)
+            notes.append("threshold \(k)=\(v) → \(fixed)"); c.thresholds[k] = fixed
+        }
+        for (k, v) in c.priorOffsets where !v.isFinite || abs(v) > 1.5 {
+            // ±1.5 is the preference-compiler clamp (ARCHITECTURE §9) — hand edits
+            // don't get to exceed what the user-control surface allows.
+            let fixed = v.isFinite ? max(-1.5, min(1.5, v)) : 0
+            notes.append("priorOffset \(k)=\(v) → \(fixed)"); c.priorOffsets[k] = fixed
+        }
+        return (c, notes)
+    }
+
     /// Loads the config, writing the defaults file on first use so there is always
-    /// a concrete JSON to hand-tweak. Unknown/missing keys fall back to defaults
-    /// via the accessor methods — the file can never break the scorer.
+    /// a concrete JSON to hand-tweak. Invalid FIELDS are corrected in memory (file
+    /// untouched); an UNDECODABLE file is backed up — never silently overwritten —
+    /// before defaults are regenerated.
     static func load() -> IntentConfig {
         let url = fileURL()
+        guard FileManager.default.fileExists(atPath: url.path) else {
+            let fresh = IntentConfig(); fresh.save(); return fresh
+        }
         if let data = try? Data(contentsOf: url),
-           let config = try? JSONDecoder().decode(IntentConfig.self, from: data) {
+           let decoded = try? JSONDecoder().decode(IntentConfig.self, from: data) {
+            let (config, corrections) = decoded.validated()
+#if DEBUG
+            if !corrections.isEmpty {
+                print("[intent] config corrections (file left untouched):")
+                corrections.forEach { print("  · \($0)") }
+            }
+#endif
             return config
         }
-        let fresh = IntentConfig()
-        fresh.save()
-        return fresh
+        let backup = url.deletingLastPathComponent()
+            .appendingPathComponent("IntentConfig.broken-\(Int(Date().timeIntervalSince1970)).json")
+        try? FileManager.default.moveItem(at: url, to: backup)
+#if DEBUG
+        print("[intent] ⚠️ IntentConfig.json undecodable — backed up as \(backup.lastPathComponent), defaults regenerated")
+#endif
+        let fresh = IntentConfig(); fresh.save(); return fresh
     }
 
     func save() {

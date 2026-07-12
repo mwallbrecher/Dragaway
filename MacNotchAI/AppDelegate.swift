@@ -411,6 +411,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
 #if DEBUG
         // ── THESIS: Intent Engine controls (Debug builds only, thesis branch) ────
+        // Menu open is also a reconcile moment: for a menu-bar app it's the likeliest
+        // "user came back from System Settings after granting AX" trigger.
+        IntentEngine.shared.reconcileSensors()
         menu.addItem(.separator())
         let intentItem = NSMenuItem(title: "Intent Engine (Thesis)", action: nil, keyEquivalent: "")
         let intentSub = NSMenu()
@@ -439,6 +442,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                          action: #selector(menuIntentAXSensor))
         ax.state = (axOn && axTrusted) ? .on : .off
         intentSub.addItem(.separator())
+        addItem(to: intentSub, title: "Run Golden Checks", action: #selector(menuIntentGoldenChecks))
         addItem(to: intentSub, title: "Open Intent Config", action: #selector(menuIntentOpenConfig))
         addItem(to: intentSub, title: "Reload Intent Config", action: #selector(menuIntentReloadConfig))
         intentItem.submenu = intentSub
@@ -1834,6 +1838,13 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             engine.axSensorEnabled = true     // off → on (and ask if needed)
             if !AXIsProcessTrusted() { engine.requestAXPermission() }
         }
+    }
+
+    @objc private func menuIntentGoldenChecks() {
+        let alert = NSAlert()
+        alert.messageText = "Intent golden checks"
+        alert.informativeText = IntentGoldenChecks.report()
+        alert.runModal()
     }
 
     @objc private func menuIntentOpenConfig() {

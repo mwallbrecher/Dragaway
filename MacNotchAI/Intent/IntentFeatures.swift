@@ -64,8 +64,26 @@ final class FeatureExtractor {
         let hash: String
         let source: String?
         let isText: Bool
+        let shape: String
+        let language: String?
+        let langConfidence: Double?
         let embedding: [Double]?
     }
+
+    /// In-memory bridge for the M3 resolver — NEVER on the bus, never persisted:
+    /// metadata of the newest foreign-language text copy. At accept time the
+    /// resolver re-reads NSPasteboard and matches `hash` to confirm the evidence
+    /// object is still what's on the clipboard — raw text stays out of the
+    /// pipeline until the moment the user says yes.
+    struct ClipCandidate {
+        let t: TimeInterval
+        let hash: String
+        let language: String?
+        let langConfidence: Double?
+        let source: String?
+        let shape: String
+    }
+    private(set) var translationCandidate: ClipCandidate?
     private var copies: [Copy] = []                                  // 90 s window
     private var bursts: [(t: TimeInterval, app: String?, net: Double, flips: Int)] = []  // 60 s
     private var selections: [(t: TimeInterval, docID: String)] = []  // 60 s
@@ -83,6 +101,7 @@ final class FeatureExtractor {
 
     func reset() {
         copies = []; bursts = []; selections = []
+        translationCandidate = nil
     }
 
     private func trim(before t: TimeInterval) {
@@ -96,11 +115,18 @@ final class FeatureExtractor {
     private func onClipboard(_ p: ClipboardPayload, t: TimeInterval) {
         guard p.contentClass == "text" || p.contentClass == "url" else { return }
 
-        // Re-copy of identical content refreshes recency but shouldn't stack counts.
-        if !copies.contains(where: { $0.hash == p.hashPrefix }) {
-            copies.append(Copy(t: t, hash: p.hashPrefix, source: p.sourceApp,
-                               isText: p.contentClass == "text", embedding: p.embedding))
+        // Identical re-copy: REFRESH recency (remove + re-append keeps the array
+        // time-ordered, so `last(where:)` stays correct) — a translator switch
+        // right after re-copying must see a fresh copy. But never inflate the
+        // distinct-copy count: collect_mode stays honest about "3 different things".
+        let entry = Copy(t: t, hash: p.hashPrefix, source: p.sourceApp,
+                         isText: p.contentClass == "text", shape: p.shape,
+                         language: p.language, langConfidence: p.langConfidence,
+                         embedding: p.embedding)
+        if let i = copies.firstIndex(where: { $0.hash == p.hashPrefix }) {
+            copies.remove(at: i)
         }
+        copies.append(entry)
 
         if p.isForeignLanguage {
             // Strength: language confidence × snippet-length band (40–2000 chars is
@@ -108,6 +134,9 @@ final class FeatureExtractor {
             let band: Double = (40...2000).contains(p.charCount) ? 1.0 : 0.5
             emit?(Evidence(feature: .foreignLanguageClip,
                            strength: (p.langConfidence ?? 0.8) * band, t: t))
+            translationCandidate = ClipCandidate(
+                t: t, hash: p.hashPrefix, language: p.language,
+                langConfidence: p.langConfidence, source: p.sourceApp, shape: p.shape)
         }
 
         detectCollectMode(t: t)
@@ -150,9 +179,12 @@ final class FeatureExtractor {
             emit?(Evidence(feature: .copyThenTranslatorSwitch, strength: 1.0, t: t))
         }
 
-        // code/table copied, then straight into a prose app: format mismatch.
-        // (Weak evidence by design — weight stays low; see initial weights table.)
-        if sinceCopy <= 10, ["mail", "notes", "messaging"].contains(p.category) {
+        // code/table copied, then straight into a prose-shaped app — ONLY those
+        // shapes constitute a transformation tell; arbitrary text → Notes is just
+        // normal work and must not fire (weak evidence by design, weight 0.8).
+        if sinceCopy <= 10,
+           ["code", "table"].contains(lastTextCopy.shape),
+           ["mail", "notes", "messaging"].contains(p.category) {
             emit?(Evidence(feature: .formatMismatch, strength: 0.8, t: t))
         }
     }

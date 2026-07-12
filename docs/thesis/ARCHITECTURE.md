@@ -97,14 +97,29 @@ sensor* and the content is discarded:
 - clipboard text → content class, char/word count, top language + confidence,
   `isForeignLanguage`, shape (`prose|code|table|list|question|fragment`), `hasURL`,
   SHA-256 hash prefix (re-copy/dedup detection without content), source app
-- concealed/transient pasteboards (password managers, `org.nspasteboard.ConcealedType`)
-  are **skipped entirely**
+- sensitive pasteboards are **skipped entirely** via the shared `PasteboardPrivacy` gate
+  (concealed · `com.apple.is-sensitive` · transient · auto-generated — the same list the
+  clipboard-history feature uses, so the two clipboard paths cannot drift; auto-generated
+  is also semantic hygiene: a programmatic write is not a user copy, hence not a signal)
 - every event carries its **own timestamp `t`**; all downstream logic MUST use event time,
-  never wall clock — this single rule is what makes traces deterministically replayable (§10)
+  never wall clock — this single rule is what makes traces deterministically replayable (§10).
+  Sensors stamp at **publish time**, so bus time is monotonic (a DEBUG tripwire guards this;
+  scroll bursts accept ≤ ~1.3 s detection latency — <2% decay error at τ ≥ 60 s). The replayer
+  **rejects** traces with >1 s time regressions instead of sorting them — order is part of the
+  recorded interaction; sub-second regressions are tolerated as clock jitter (`Date()` is not
+  monotonic across NTP adjustments).
 
 The `SignalBus` keeps a ring buffer (window 120 s / cap 600 events, trimmed against the
 *newest event's* time, not wall clock) for windowed feature extraction; older data exists only
-as aggregates. Data minimisation is architecture, not policy.
+as aggregates.
+
+**Honest classification of what remains:** the bus carries no raw content, but what it does
+carry — content hashes, sentence embeddings, app identities, timing — is **content-minimised
+behavioural data, not anonymous data**. Embeddings are partially invertible, hashes support
+membership tests ("was exactly this text copied?"), and the event stream itself profiles work
+behaviour. Consequences: traces stay on-device, count as personal data under UK GDPR (consent +
+retention rules, M5), and anonymisation is deliberately **not** claimed anywhere in this design.
+Data minimisation is architecture; anonymity would be an overclaim.
 
 ---
 
@@ -285,8 +300,8 @@ events (usage of language control is itself a finding). Onboarding uses the same
 | M | Scope | Accept when |
 |---|---|---|
 | **M1** | SignalBus, Clipboard/AppFocus/Dwell sensors, trace recorder + replayer, engine flag + debug menu | a recorded real session replays with identical event stream; zero permissions used |
-| **M2** | AX sensor (opt-in), feature detectors, scorer + `IntentConfig`, weights tuned on own traces | golden traces score as expected; "why" decomposition available |
-| **M3** | whisper affordance + policy + resolver (Translation e2e) + summon ticker | translation scenario works end-to-end passively and via summon |
+| **M2** | AX sensor (opt-in), feature detectors, scorer + `IntentConfig`, weights tuned on own traces | golden smoke checks (debug menu → Run Golden Checks) all pass; "why" decomposition available |
+| **M3** | whisper affordance + policy + resolver (Translation e2e) + summon ticker. **Passive channel fires for translation only** — comprehension/discovery stay ticker-only until calibrated on real traces | translation scenario works end-to-end passively and via summon |
 | **M4** | online learning, context priors, preference compiler, onboarding, LLM disambiguator/phrasing | preference statement changes behaviour with preview+undo |
 | **M5** | study mode switcher, in-situ prompts, consent gates, export | pilot session produces analysable RQ1/RQ2 dataset |
 
