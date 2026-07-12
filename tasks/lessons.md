@@ -671,3 +671,32 @@
   the pill fade completes and before rebuilding the next replay state.
 - **Rule:** when a loop changes demo content between cycles, perform the content swap after the outgoing
   surface is hidden, not at the same moment the transition begins.
+
+---
+
+## Git coordination
+
+### [GIT-01] Never create a branch or worktree just to relocate changes
+- **What was wrong:** an agent found product-page files in the `thesis` checkout and created a new
+  `codex/product-page` branch plus a third project worktree to hold them, even though an existing
+  `main` worktree already contained the live-product development.
+- **Why:** branches and worktrees are shared coordination state. Creating an agent-named branch or
+  another checkout changes the repository topology for every person and agent, obscures the canonical
+  `main`/`thesis` model, and makes ownership of uncommitted files harder to establish.
+- **Fix:** move only the specifically approved files into the already existing checkout for the correct
+  canonical branch, verify the destination, then remove only the agent-created temporary state.
+- **Rule:** this repository has exactly two canonical branches, `main` and `thesis`. Never create,
+  rename, copy, or remove a branch/worktree without explicit user approval. Use `git worktree list` to
+  locate the existing checkout for the required branch.
+
+### [GIT-02] Unexpected dirty or staged paths belong to someone else until proven otherwise
+- **What was wrong:** after repository state changed between turns, an agent interpreted staged Thesis
+  file deletions as accidental cleanup state and restored them without first establishing which person
+  or agent had staged them.
+- **Why:** multiple coding agents and the user can work concurrently. A dirty index or worktree is not
+  evidence of a mistake; restoring, stashing, moving, or deleting those paths can destroy active work.
+- **Fix:** inspect branch, status, worktree list, staged diff, and overlapping active work; touch only
+  paths whose ownership and requested destination are known. Stop and ask when ownership is unclear.
+- **Rule:** before every repository mutation run `git branch --show-current`,
+  `git status --short --branch`, and `git worktree list`. Never restore, stash, stage, commit, move, or
+  delete unexpected changes. In a shared dirty worktree, stage exact reviewed paths—never `git add .`.
