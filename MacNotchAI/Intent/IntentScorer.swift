@@ -30,6 +30,12 @@ struct IntentConfig: Codable {
     var taus: [String: Double] = IntentConfig.defaultTaus
     /// Exposure thresholds per tier (probability domain).
     var thresholds: [String: Double] = ["lazy": 0.85, "balanced": 0.70, "aggressive": 0.55]
+    /// Cooldown after an explicit dismiss (ignore = half of this) — ARCHITECTURE §7.
+    var dismissCooldownSeconds: Double = 600
+    /// Passive-channel rate limit per tier (shows per hour).
+    var rateLimits: [String: Int] = ["lazy": 3, "balanced": 6, "aggressive": 12]
+    /// "class|bundleID" pairs the user muted ("do not suggest again").
+    var mutes: [String] = []
 
     // Initial values, calibrated against the synthetic design targets (validated by
     // the standalone scorer test; refine against golden traces):
@@ -64,6 +70,35 @@ struct IntentConfig: Codable {
     func tau(for f: FeatureID) -> Double { taus[f.rawValue] ?? Self.defaultTaus[f.rawValue] ?? 90 }
     func priorOffset(for c: IntentClass) -> Double { priorOffsets[c.rawValue] ?? 0 }
     var exposureThreshold: Double { thresholds[tier] ?? 0.70 }
+    var rateLimitPerHour: Int { rateLimits[tier] ?? 6 }
+
+    // MARK: schema-evolution-safe decoding
+    //
+    // Synthesized Codable would reject any config file missing a newly added key
+    // (keyNotFound) and shunt the user's hand-tuned file into the .broken backup
+    // path on every schema growth. decodeIfPresent per field keeps old files valid.
+
+    init() {}
+
+    private enum CodingKeys: String, CodingKey {
+        case v, tier, basePriorLogOdds, priorOffsets, weights, taus, thresholds,
+             dismissCooldownSeconds, rateLimits, mutes
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        let d = IntentConfig()
+        v                      = try c.decodeIfPresent(Int.self, forKey: .v) ?? d.v
+        tier                   = try c.decodeIfPresent(String.self, forKey: .tier) ?? d.tier
+        basePriorLogOdds       = try c.decodeIfPresent(Double.self, forKey: .basePriorLogOdds) ?? d.basePriorLogOdds
+        priorOffsets           = try c.decodeIfPresent([String: Double].self, forKey: .priorOffsets) ?? d.priorOffsets
+        weights                = try c.decodeIfPresent([String: Double].self, forKey: .weights) ?? d.weights
+        taus                   = try c.decodeIfPresent([String: Double].self, forKey: .taus) ?? d.taus
+        thresholds             = try c.decodeIfPresent([String: Double].self, forKey: .thresholds) ?? d.thresholds
+        dismissCooldownSeconds = try c.decodeIfPresent(Double.self, forKey: .dismissCooldownSeconds) ?? d.dismissCooldownSeconds
+        rateLimits             = try c.decodeIfPresent([String: Int].self, forKey: .rateLimits) ?? d.rateLimits
+        mutes                  = try c.decodeIfPresent([String].self, forKey: .mutes) ?? d.mutes
+    }
 
     // MARK: persistence — a hand-editable JSON next to the traces
 
@@ -106,6 +141,14 @@ struct IntentConfig: Codable {
             // don't get to exceed what the user-control surface allows.
             let fixed = v.isFinite ? max(-1.5, min(1.5, v)) : 0
             notes.append("priorOffset \(k)=\(v) → \(fixed)"); c.priorOffsets[k] = fixed
+        }
+        if !c.dismissCooldownSeconds.isFinite || !(30...86_400).contains(c.dismissCooldownSeconds) {
+            notes.append("dismissCooldownSeconds \(c.dismissCooldownSeconds) → 600")
+            c.dismissCooldownSeconds = 600
+        }
+        for (k, v) in c.rateLimits where !(1...60).contains(v) {
+            let fixed = k == "lazy" ? 3 : (k == "aggressive" ? 12 : 6)
+            notes.append("rateLimit \(k)=\(v) → \(fixed)"); c.rateLimits[k] = fixed
         }
         return (c, notes)
     }
