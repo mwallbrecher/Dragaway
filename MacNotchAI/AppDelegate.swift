@@ -441,6 +441,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                             : "Selection Sensor (Accessibility)",
                          action: #selector(menuIntentAXSensor))
         ax.state = (axOn && axTrusted) ? .on : .off
+        addItem(to: intentSub, title: "Summon Intent Ticker (⌃⌥⌘I)", action: #selector(menuIntentTicker))
         intentSub.addItem(.separator())
         addItem(to: intentSub, title: "Run Golden Checks", action: #selector(menuIntentGoldenChecks))
         addItem(to: intentSub, title: "Open Intent Config", action: #selector(menuIntentOpenConfig))
@@ -1160,7 +1161,10 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     /// ⌃⌘N: open a session from whatever the clipboard holds — copied files directly,
     /// anything else (text / link / image) through the same materializer the
     /// drag-anything pipeline uses. Beeps when the clipboard has nothing usable.
-    private func openSessionFromClipboard() {
+    // Internal (not private): the THESIS whisper-accept path reuses exactly this
+    // flow — AffordanceController hands off here so raw clipboard text enters a
+    // session only after explicit user consent (docs/thesis/ARCHITECTURE.md §7).
+    func openSessionFromClipboard() {
         let pb = NSPasteboard.general
         var urls = (pb.readObjects(forClasses: [NSURL.self],
                                    options: [.urlReadingFileURLsOnly: true]) as? [URL]) ?? []
@@ -1838,6 +1842,10 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             engine.axSensorEnabled = true     // off → on (and ask if needed)
             if !AXIsProcessTrusted() { engine.requestAXPermission() }
         }
+    }
+
+    @objc private func menuIntentTicker() {
+        IntentEngine.shared.affordances.toggleTicker()
     }
 
     @objc private func menuIntentGoldenChecks() {

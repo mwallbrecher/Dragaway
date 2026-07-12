@@ -176,6 +176,53 @@ enum IntentGoldenChecks {
                                                  : "loaded without complaint"))
         }
 
+        // 11 · Ticker-only class: even at 99%, comprehension must not pass the
+        //      passive gate in M3 (it stays summon-only until calibrated).
+        do {
+            let policy = AffordancePolicy()
+            let v = policy.decide(intentClass: .comprehension, probability: 0.99,
+                                  frontApp: nil, quietContext: false,
+                                  at: t0, config: IntentConfig())
+            checks.append(Check(name: "11 ticker-only class never passive", pass: !v.isShow,
+                                detail: !v.isShow ? "comprehension blocked as designed"
+                                                  : "comprehension passed the passive gate"))
+        }
+
+        // 12 · Dismiss cooldown: show → dismiss → blocked → expires → show again.
+        do {
+            var policy = AffordancePolicy()
+            let cfg = IntentConfig()
+            let first = policy.decide(intentClass: .translation, probability: 0.9,
+                                      frontApp: nil, quietContext: false, at: t0, config: cfg).isShow
+            policy.confirmShown(at: t0)
+            policy.record(.dismissed, intentClass: .translation, at: t0 + 1, config: cfg)
+            let blocked = !policy.decide(intentClass: .translation, probability: 0.9,
+                                         frontApp: nil, quietContext: false,
+                                         at: t0 + 2, config: cfg).isShow
+            let after = policy.decide(intentClass: .translation, probability: 0.9,
+                                      frontApp: nil, quietContext: false,
+                                      at: t0 + 2 + cfg.dismissCooldownSeconds, config: cfg).isShow
+            checks.append(Check(name: "12 dismiss cooldown blocks then expires",
+                                pass: first && blocked && after,
+                                detail: "show=\(first) blocked=\(blocked) after=\(after)"))
+        }
+
+        // 13 · Hourly rate limit: tier default exhausts, then the window slides.
+        do {
+            var policy = AffordancePolicy()
+            let cfg = IntentConfig()
+            for i in 0..<cfg.rateLimitPerHour { policy.confirmShown(at: t0 + Double(i)) }
+            let blocked = !policy.decide(intentClass: .translation, probability: 0.9,
+                                         frontApp: nil, quietContext: false,
+                                         at: t0 + 10, config: cfg).isShow
+            let later = policy.decide(intentClass: .translation, probability: 0.9,
+                                      frontApp: nil, quietContext: false,
+                                      at: t0 + 3700, config: cfg).isShow
+            checks.append(Check(name: "13 hourly rate limit enforced, window slides",
+                                pass: blocked && later,
+                                detail: "blocked at \(cfg.rateLimitPerHour)/h=\(blocked), freed after window=\(later)"))
+        }
+
         return checks
     }
 

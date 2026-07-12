@@ -30,6 +30,7 @@ final class IntentEngine {
     let recorder = TraceRecorder()
     let extractor = FeatureExtractor()
     let scorer: IntentScorer
+    let affordances: AffordanceController
 
     private var sensors: [IntentSensor] = []
     private var pipelineSink: AnyCancellable?
@@ -38,11 +39,17 @@ final class IntentEngine {
     private(set) var isRunning = false
 
     private init() {
-        scorer = IntentScorer(config: .load())
-        // L2/L3 are ALWAYS attached: live capture and trace replay take the same path.
+        let scorer = IntentScorer(config: .load())
+        self.scorer = scorer
+        affordances = AffordanceController(scorer: scorer, extractor: extractor)
+        // L2/L3 are ALWAYS attached: live capture and trace replay take the same
+        // path. L4/L5 (the affordance surface) only reacts while the engine is
+        // RUNNING — a replay must never pop UI out of historical events.
         extractor.emit = { [weak self] evidence in self?.scorer.add(evidence) }
         pipelineSink = bus.events.sink { [weak self] event in
-            self?.extractor.handle(event)
+            guard let self else { return }
+            self.extractor.handle(event)
+            if self.isRunning { self.affordances.evaluate(at: event.t) }
         }
         // Re-check the AX grant whenever the app becomes active — the user coming
         // back after granting in System Settings is exactly this moment (there is
@@ -76,6 +83,7 @@ final class IntentEngine {
         sensors.forEach { $0.start(bus: bus) }
         isRunning = true
         reconcileSensors()   // attaches the SelectionSensor when flag + grant align
+        affordances.start()  // summon hotkey + affordance log
 
 #if DEBUG
         if UserDefaults.standard.bool(forKey: Self.verboseKey) {
@@ -94,6 +102,7 @@ final class IntentEngine {
     /// Stops sensors AND any running recording. Also used to quiesce the live
     /// pipeline before a trace replay (live + replayed timelines must not mix).
     func stop() {
+        affordances.stop()
         recorder.stop()
         sensors.forEach { $0.stop() }
         sensors = []
@@ -131,6 +140,7 @@ final class IntentEngine {
 
     func reloadConfig() {
         scorer.config = .load()
+        affordances.configReloaded()   // re-seed mutes; tier/θ are read live
     }
 
     /// Score snapshot with "why" decomposition. `at` defaults to now, which equals

@@ -423,6 +423,13 @@ private struct ChipsColumnView: View {
         }
         .padding(18 * scale)
         .frame(width: 280 * scale, alignment: .topLeading)
+        // THESIS hook (Intent Pipeline M3): a whisper accept opens this session via
+        // the clipboard path and then asks for the resolved action to run — the same
+        // code path as tapping the chip (docs/thesis/ARCHITECTURE.md §7). This view
+        // only exists in the chips stage, so no stage guard is needed.
+        .onReceive(NotificationCenter.default.publisher(for: .intentAutoRunAction)) { note in
+            if let action = note.object as? AIAction { runAction(action) }
+        }
     }
 
     /// Video/audio: no hosted-AI actions apply. The chips stage shows only file

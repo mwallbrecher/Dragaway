@@ -203,9 +203,12 @@ presentation, **screen sharing**, secure input — never speak. (Known confound 
 aggressive users generate more feedback → learn faster.)
 
 **Two channels, one scorer.**
-- *Passive channel:* unsolicited whisper — gated by θ(tier).
-- *Active channel (summon ticker):* a hotkey shows the current top-3 intents with honest
-  calibrated confidence — **no threshold**; a solicited suggestion cannot annoy by definition.
+- *Passive channel:* unsolicited whisper — gated by θ(tier). M3 defaults: accept = click or
+  **⌥⏎** (Carbon hotkey, registered only while the whisper is visible), dismiss = ×,
+  no reaction = 8 s auto-fade (logged as `ignored`, weak negative).
+- *Active channel (summon ticker):* **⌃⌥⌘I** (or the debug menu) shows the current top-3
+  intents with honest calibrated confidence — **no threshold**; a solicited suggestion cannot
+  annoy by definition. Hotkeys become user-configurable with the M4 user-control surface.
 
 The ticker doubles as a measurement instrument: **every summon is a labelled ground-truth
 moment** ("user had intent NOW"). A summon while the passive channel stayed silent is a logged

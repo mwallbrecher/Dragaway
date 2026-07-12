@@ -29,7 +29,7 @@ single `thesis` branch — do not create `thesis/*` component branches (`docs/GI
 | `infrastructure` | branch/PR/workflow scaffolding, architecture spec | ongoing | `docs/GIT_WORKFLOW.md`, `docs/thesis/ARCHITECTURE.md` |
 | `signal-capture` | L1 sensors (clipboard, app focus, dwell/scroll, AX selection), SignalBus, trace recording + replay harness | **M1 done · M2 AX sensor added** | `MacNotchAI/Intent/` |
 | `intent-scoring` | L2 feature detectors (8) + L3 log-linear Bayes scorer with editable `IntentConfig`; LLM disambiguator pending (M4) | **in progress (M2 core done)** | `MacNotchAI/Intent/` |
-| `affordance-ui` | whisper pill (passive channel), summon ticker (active channel), policy + resolver | planned (M3) | — |
+| `affordance-ui` | whisper panel (passive channel), summon ticker (active channel), AffordancePolicy + TaskResolver, affordance outcome log | **in progress (M3 core done — translation e2e)** | `MacNotchAI/Intent/Policy/`, `MacNotchAI/Intent/UI/` |
 | `personalization` | online weight learning, per-context prior offsets | planned (M4) | — |
 | `user-control` | sensitivity tiers, preference compiler (NL → config), onboarding | planned (M4) | — |
 | `study-instrumentation` | telemetry schema, study-mode switcher, in-situ prompts, export | planned (M5) | — |
