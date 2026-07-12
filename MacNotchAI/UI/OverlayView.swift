@@ -425,10 +425,16 @@ private struct ChipsColumnView: View {
         .frame(width: 280 * scale, alignment: .topLeading)
         // THESIS hook (Intent Pipeline M3): a whisper accept opens this session via
         // the clipboard path and then asks for the resolved action to run — the same
-        // code path as tapping the chip (docs/thesis/ARCHITECTURE.md §7). This view
-        // only exists in the chips stage, so no stage guard is needed.
-        .onReceive(NotificationCenter.default.publisher(for: .intentAutoRunAction)) { note in
-            if let action = note.object as? AIAction { runAction(action) }
+        // code path as tapping the chip (docs/thesis/ARCHITECTURE.md §7). BOTH the
+        // notification (live case) and .onAppear (chips subview re-insert on the
+        // stage transition) drain the SAME IntentAutoRun latch — take() clears it,
+        // so the action runs exactly once whichever path wins the race. The
+        // notification payload is only a nudge; the latch is the source of truth.
+        .onReceive(NotificationCenter.default.publisher(for: .intentAutoRunAction)) { _ in
+            if let action = IntentAutoRun.shared.take() { runAction(action) }
+        }
+        .onAppear {
+            if let action = IntentAutoRun.shared.take() { runAction(action) }
         }
     }
 

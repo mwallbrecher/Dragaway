@@ -163,12 +163,14 @@ final class AffordanceController {
 
         // Freshness re-check at the moment of consent, then hand off to the
         // EXISTING clipboard-session path (⌃⌘N) — raw text enters a session only
-        // now. The chips view auto-runs the resolved action once it's on screen.
+        // now. Arm the latch BEFORE opening so the chips view consumes it on its
+        // next render (robust against the immortal-window reuse race); also post
+        // the notification for the already-live case. Whichever fires first wins;
+        // take() makes it run exactly once.
         guard TaskResolver.pasteboardMatches(suggestion.candidateHash) else { NSSound.beep(); return }
+        IntentAutoRun.shared.arm(suggestion.action)
         (NSApp.delegate as? AppDelegate)?.openSessionFromClipboard()
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) {
-            NotificationCenter.default.post(name: .intentAutoRunAction, object: suggestion.action)
-        }
+        NotificationCenter.default.post(name: .intentAutoRunAction, object: suggestion.action)
     }
 
     private func dismiss(_ suggestion: IntentSuggestion) {
