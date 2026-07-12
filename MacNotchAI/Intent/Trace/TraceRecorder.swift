@@ -7,9 +7,11 @@ import Combine
 // object that intentionally does NOT decode as a SignalEvent — the replayer skips
 // undecodable lines, so the format stays forgiving and versionable.
 //
-// Traces are content-free by construction (the bus privacy invariant), so a trace
-// file is safe to share/analyse; it is still user data and stays local unless the
-// participant explicitly exports it (consent flow lands with M5).
+// Traces carry no raw content (the bus privacy invariant) but remain SENSITIVE
+// BEHAVIOURAL DATA: hashes support membership tests, embeddings are partially
+// invertible, and the event stream profiles work behaviour. Content-minimised is
+// not anonymised. Traces stay local; sharing/export only through the M5 consent
+// flow, and they are treated as personal data under GDPR in the study design.
 final class TraceRecorder {
 
     private(set) var isRecording = false

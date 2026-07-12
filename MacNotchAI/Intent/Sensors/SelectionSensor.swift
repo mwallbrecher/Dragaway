@@ -36,9 +36,12 @@ final class SelectionSensor: IntentSensor {
     func start(bus: SignalBus) {
         self.bus = bus
         guard AXIsProcessTrusted() else { return }   // dormant without the grant
-        timer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
+        // .common mode: default-mode timers pause during menu tracking (repo idiom).
+        let t = Timer(timeInterval: 1.0, repeats: true) { [weak self] _ in
             self?.poll()
         }
+        RunLoop.main.add(t, forMode: .common)
+        timer = t
     }
 
     func stop() {

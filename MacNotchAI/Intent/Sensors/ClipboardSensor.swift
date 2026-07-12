@@ -8,8 +8,8 @@ import AppKit
 // to that feature. Polling an Int at 2 Hz is negligible.
 //
 // PRIVACY: the pasteboard string is classified (IntentText) and discarded — only
-// derived scalars are published. Concealed/transient pasteboards (password
-// managers) are skipped entirely.
+// derived scalars are published. Sensitive pasteboards (PasteboardPrivacy) are
+// skipped entirely.
 final class ClipboardSensor: IntentSensor {
 
     let name = "clipboard"
@@ -21,9 +21,12 @@ final class ClipboardSensor: IntentSensor {
     func start(bus: SignalBus) {
         self.bus = bus
         lastChangeCount = NSPasteboard.general.changeCount   // ignore pre-existing content
-        timer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in
+        // .common mode: default-mode timers pause during menu tracking (repo idiom).
+        let t = Timer(timeInterval: 0.5, repeats: true) { [weak self] _ in
             self?.poll()
         }
+        RunLoop.main.add(t, forMode: .common)
+        timer = t
     }
 
     func stop() {
@@ -37,10 +40,12 @@ final class ClipboardSensor: IntentSensor {
         lastChangeCount = pb.changeCount
 
         let types = pb.types ?? []
-        // Respect the de-facto pasteboard privacy markers (1Password & co).
-        let concealed = NSPasteboard.PasteboardType("org.nspasteboard.ConcealedType")
-        let transient = NSPasteboard.PasteboardType("org.nspasteboard.TransientType")
-        guard !types.contains(concealed), !types.contains(transient) else { return }
+        // Shared privacy gate (PasteboardPrivacy — the SAME list ClipboardHistoryStore
+        // uses, so the two clipboard paths cannot drift): concealed / is-sensitive /
+        // transient / auto-generated content never enters the pipeline in any derived
+        // form. Auto-generated is also semantic hygiene — a programmatic pasteboard
+        // write is not a user copy, hence not an intent signal.
+        guard !PasteboardPrivacy.isSensitive(types) else { return }
 
         guard let payload = classify(pb, types: types) else { return }
         bus?.publish(SignalEvent(t: Date().timeIntervalSince1970, kind: .clipboard,

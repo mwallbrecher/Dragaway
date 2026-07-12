@@ -6,13 +6,17 @@ import Combine
 // Event model + SignalBus. Two invariants every sensor and consumer must honour:
 //
 //  1. PRIVACY — raw content never crosses the bus. Sensors compute content-derived
-//     scalars AT CAPTURE TIME and discard the content itself. Everything on the bus
-//     is safe to persist, log, and export by construction.
+//     scalars AT CAPTURE TIME and discard the content itself. NB: what remains
+//     (hashes, embeddings, app identities, timing) is content-MINIMISED behavioural
+//     data — pseudonymous, NOT anonymous: embeddings are partially invertible and
+//     hashes support membership tests. It stays on-device; export only through the
+//     M5 consent flow (ARCHITECTURE §4).
 //
 //  2. REPLAY — every event carries its own timestamp `t`. Downstream logic must use
-//     event time, never Date()/wall clock. This single rule is what makes recorded
-//     traces replay deterministically through the whole pipeline (golden traces =
-//     regression tests for intent detection).
+//     event time, never Date()/wall clock. Sensors stamp at PUBLISH time, so bus
+//     time is monotonic (the DEBUG tripwire below guards this). This is what makes
+//     recorded traces replay deterministically through the whole pipeline (golden
+//     traces = regression tests for intent detection).
 
 // MARK: - Event model
 
@@ -123,8 +127,19 @@ final class SignalBus {
 
     private let windowSeconds: TimeInterval = 120
     private let capacity = 600
+    private var lastPublishedT: TimeInterval = -.infinity
 
     func publish(_ event: SignalEvent) {
+#if DEBUG
+        // Monotonicity tripwire: sensors stamp at publish time, so time can never
+        // run backwards on the bus. If this prints, a sensor regressed to stamping
+        // past timestamps — fix the sensor, don't relax the invariant.
+        if event.t < lastPublishedT - 0.001 {
+            print("[intent] ⚠️ non-monotonic publish: \(event.kind.rawValue) " +
+                  "t=\(event.t) < last=\(lastPublishedT)")
+        }
+#endif
+        lastPublishedT = max(lastPublishedT, event.t)
         buffer.append(event)
         let cutoff = event.t - windowSeconds
         if buffer.first.map({ $0.t < cutoff }) == true {
@@ -134,6 +149,13 @@ final class SignalBus {
             buffer.removeFirst(buffer.count - capacity)
         }
         events.send(event)
+    }
+
+    /// Full wipe — required before replaying a trace: stale live events carry
+    /// timestamps FAR ahead of the recorded timeline and would corrupt windowing.
+    func reset() {
+        buffer = []
+        lastPublishedT = -.infinity
     }
 
     /// Events within `seconds` before the reference time (defaults to newest event).

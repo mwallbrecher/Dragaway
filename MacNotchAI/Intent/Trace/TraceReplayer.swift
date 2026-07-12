@@ -16,6 +16,21 @@ import Foundation
 // live events into a replayed timeline would corrupt the buffer's time window.
 enum TraceReplayer {
 
+    enum TraceError: LocalizedError {
+        case nonMonotonic(line: Int, regressionSeconds: Double)
+        var errorDescription: String? {
+            switch self {
+            case .nonMonotonic(let line, let r):
+                return "Trace rejected: event at line \(line) jumps "
+                     + String(format: "%.1f", r)
+                     + " s backwards. Order is part of the recorded interaction — a broken "
+                     + "trace must be visibly broken, never silently re-sorted. "
+                     + "(Sub-second regressions are tolerated as clock jitter: Date() is "
+                     + "not monotonic across NTP adjustments.)"
+            }
+        }
+    }
+
     struct Summary {
         let url: URL
         let events: Int
@@ -43,10 +58,19 @@ enum TraceReplayer {
         let decoder = JSONDecoder()
         var events: [SignalEvent] = []
         var skipped = 0
+        var lastT = -Double.infinity
+        var lineNo = 0
         let content = try String(contentsOf: url, encoding: .utf8)
-        for line in content.split(separator: "\n") {
+        for line in content.split(separator: "\n", omittingEmptySubsequences: false) {
+            lineNo += 1
             guard !line.isEmpty else { continue }
             if let event = try? decoder.decode(SignalEvent.self, from: Data(line.utf8)) {
+                // The bus guarantees monotonic publish time (±clock jitter), so a
+                // regression > 1 s means a corrupted or hand-spliced trace.
+                if event.t < lastT - 1.0 {
+                    throw TraceError.nonMonotonic(line: lineNo, regressionSeconds: lastT - event.t)
+                }
+                lastT = max(lastT, event.t)
                 events.append(event)
             } else {
                 skipped += 1   // header line, comments, future schema extensions

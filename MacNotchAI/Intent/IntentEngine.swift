@@ -34,6 +34,7 @@ final class IntentEngine {
     private var sensors: [IntentSensor] = []
     private var pipelineSink: AnyCancellable?
     private var verboseSink: AnyCancellable?
+    private var activeObserver: NSObjectProtocol?
     private(set) var isRunning = false
 
     private init() {
@@ -42,6 +43,15 @@ final class IntentEngine {
         extractor.emit = { [weak self] evidence in self?.scorer.add(evidence) }
         pipelineSink = bus.events.sink { [weak self] event in
             self?.extractor.handle(event)
+        }
+        // Re-check the AX grant whenever the app becomes active — the user coming
+        // back after granting in System Settings is exactly this moment (there is
+        // no dedicated "returned from Settings" notification). No permission polling.
+        activeObserver = NotificationCenter.default.addObserver(
+            forName: NSApplication.didBecomeActiveNotification,
+            object: nil, queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated { self?.reconcileSensors() }
         }
     }
 
@@ -63,11 +73,9 @@ final class IntentEngine {
     func start() {
         guard !isRunning else { return }
         sensors = [ClipboardSensor(), AppFocusSensor(), DwellSensor()]
-        if axSensorEnabled, AXIsProcessTrusted() {
-            sensors.append(SelectionSensor())
-        }
         sensors.forEach { $0.start(bus: bus) }
         isRunning = true
+        reconcileSensors()   // attaches the SelectionSensor when flag + grant align
 
 #if DEBUG
         if UserDefaults.standard.bool(forKey: Self.verboseKey) {
@@ -93,8 +101,30 @@ final class IntentEngine {
         isRunning = false
     }
 
-    /// Clean slate for detectors + evidence — call before replaying a trace.
+    /// Aligns the running sensor set with the desired one. Idempotent and cheap —
+    /// called on engine start, on axSensorEnabled changes, whenever the app becomes
+    /// active, and on debug-menu open. This fixes the grant-after-enable dead end:
+    /// the SelectionSensor attaches the moment flag AND trust are actually true,
+    /// without restarting the engine (a restart would kill a running recording).
+    func reconcileSensors() {
+        guard isRunning else { return }
+        let wantSelection = axSensorEnabled && AXIsProcessTrusted()
+        let haveIndex = sensors.firstIndex { $0 is SelectionSensor }
+        if wantSelection, haveIndex == nil {
+            let sensor = SelectionSensor()
+            sensor.start(bus: bus)
+            sensors.append(sensor)
+        } else if !wantSelection, let i = haveIndex {
+            sensors[i].stop()
+            sensors.remove(at: i)
+        }
+    }
+
+    /// Clean slate for detectors, evidence AND the bus buffer — call before
+    /// replaying a trace (stale live events carry timestamps far ahead of the
+    /// recorded timeline and would corrupt windowing/dedup).
     func resetPipeline() {
+        bus.reset()
         extractor.reset()
         scorer.reset()
     }
@@ -116,7 +146,7 @@ final class IntentEngine {
         get { UserDefaults.standard.bool(forKey: Self.axSensorKey) }
         set {
             UserDefaults.standard.set(newValue, forKey: Self.axSensorKey)
-            if isRunning { stop(); start() }   // rebuild the sensor set
+            reconcileSensors()   // NEVER stop()/start() here — that killed recordings
         }
     }
 

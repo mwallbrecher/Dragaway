@@ -45,9 +45,14 @@ final class DwellSensor: IntentSensor {
         scrollMonitor = NSEvent.addGlobalMonitorForEvents(matching: .scrollWheel) { [weak self] event in
             self?.handleScroll(event)
         }
-        housekeeping = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in
+        // .common mode (repo idiom, DragMonitor/ClipboardHistoryStore): default-mode
+        // timers pause during menu tracking — fatal for a menu-bar app whose engine
+        // is controlled FROM the status menu.
+        let t = Timer(timeInterval: 0.5, repeats: true) { [weak self] _ in
             self?.tick()
         }
+        RunLoop.main.add(t, forMode: .common)
+        housekeeping = t
     }
 
     func stop() {
@@ -93,7 +98,12 @@ final class DwellSensor: IntentSensor {
 
         // Sub-4pt bursts are trackpad noise, not reading behaviour.
         guard burstAbs >= 4 else { return }
-        bus?.publish(SignalEvent(t: burstLast, kind: .scrollBurst, scroll: ScrollBurstPayload(
+        // Stamped with PUBLISH time, not burstLast: the bus guarantees monotonic
+        // event time (ARCHITECTURE §4), and a burst detected ≤ ~1.3 s late (gap +
+        // tick) would otherwise time-travel behind already-published events. The
+        // shift is noise at τ ≥ 60 s (<2% decay error); `duration` still describes
+        // the gesture itself.
+        bus?.publish(SignalEvent(t: now, kind: .scrollBurst, scroll: ScrollBurstPayload(
             app: burstApp,
             duration: ((burstLast - burstStart) * 100).rounded() / 100,
             netDeltaY: (burstNet * 10).rounded() / 10,
