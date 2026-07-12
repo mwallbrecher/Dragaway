@@ -6,13 +6,41 @@ code in this repository. It is the single source of truth — there is no separa
 > The original "build-from-scratch" master brief was moved to `docs/ORIGINAL_BRIEF.md`.
 > It is historical — the shipping app has diverged significantly from it. Trust the code, not the brief.
 
-> ## ⛔ Git workflow is MANDATORY — read `docs/GIT_WORKFLOW.md` before ANY commit
-> This repo runs two parallel streams: `main` (the released app) and long-lived `thesis/*`
-> branches (graded master's-thesis work). The rules for which branch to use, how to sync
-> (**merge main in, never rebase**), how to tag thesis commits (`Thesis-Component:` trailer),
-> and how to integrate (**`--no-ff`, never squash**) are non-negotiable — breaking them
-> corrupts the academic attribution the university grades and cannot be undone. If a change
-> is thesis work, it does **not** go on `main`. When unsure, stop and ask.
+> ## ⛔ TWO-BRANCH Git workflow is MANDATORY
+> Read `docs/GIT_WORKFLOW.md` **before any edit, branch operation, worktree operation, or commit**.
+> This repository has exactly two canonical branches: `main` and `thesis`. `main` is the live
+> product, including the app, website/product page, branding, releases, bug fixes, and ordinary
+> product development. `thesis` contains only the master's-thesis contribution on top of regularly
+> merged `main`. Do not create `codex/*`, `claude/*`, `feature/*`, `fix/*`, or `thesis/*` branches;
+> do not create or copy worktrees; and do not move work between branches unless the user explicitly
+> authorises it. Thesis sync is **`git merge main` from `thesis`, never rebase or cherry-pick**.
+
+## Mandatory Git preflight — before touching files
+
+Run all three commands before every task that may change the repository:
+
+```bash
+git branch --show-current
+git status --short --branch
+git worktree list
+```
+
+Then apply these stop rules:
+
+- **Unexpected staged, unstaged, or untracked files belong to another person/agent until proven
+  otherwise.** Do not restore, stash, stage, move, delete, or commit them.
+- If the required branch is checked out in an existing worktree, use that worktree. Never create
+  another branch/worktree just to relocate a change.
+- Product work goes to `main`: shipped app code, product page/website, icons and branding, releases,
+  bug fixes, and features users receive.
+- Thesis-only research work goes to `thesis`: Computational Intent Pipeline, thesis experiments,
+  study instrumentation, and thesis-specific affordances/evaluation.
+- If a change benefits both streams, implement the general product part on `main`, merge `main` into
+  `thesis`, then add only the research-specific delta on `thesis`.
+- If branch ownership, worktree ownership, or change ownership is unclear, stop and ask the user.
+
+The presence of a `main` file or feature in `thesis` after a merge does **not** make it thesis work.
+Attribution follows the originating commit and the `Thesis-Component:` trailer, not the final file tree.
 
 ---
 

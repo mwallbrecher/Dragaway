@@ -5,7 +5,7 @@ the thesis contribution stays cleanly attributable and gradable, separate from t
 released app. See `docs/GIT_WORKFLOW.md` for the rules that keep it that way.
 
 - **Author:** Moritz Wallbrecher
-- **Integration branch:** `thesis` (branched from `main` at Dragaway v1.1.3 — the released app)
+- **Only thesis branch:** `thesis` (built on top of the released Dragaway `main` branch; branched at v1.1.3)
 - **Draft PR:** https://github.com/mwallbrecher/Dragaway/pull/1 (`thesis` → `main`, keep as draft until done)
 - **Status:** active — thesis work has started.
 - **Every thesis commit carries the trailer** `Thesis-Component: <name>` so it can be extracted
@@ -21,8 +21,8 @@ released app. See `docs/GIT_WORKFLOW.md` for the rules that keep it that way.
 
 The thesis builds the **Computational Intent Pipeline** — passive OS-level intent inference
 surfacing proactive AI affordances. Full technical spec: `docs/thesis/ARCHITECTURE.md`.
-Each component below is a `Thesis-Component:` trailer value; larger ones may get their own
-short-lived `thesis/<feature>` branch off `thesis`, merged back with `--no-ff`.
+Each component below is a `Thesis-Component:` trailer value. All components are developed on the
+single `thesis` branch — do not create `thesis/*` component branches (`docs/GIT_WORKFLOW.md` §4).
 
 | Component (`Thesis-Component:` value) | Description | Status | Key files |
 |---|---|---|---|
@@ -48,7 +48,12 @@ Frozen with tags (`git tag thesis-<name>-submission-<date>`):
 
 ## How the thesis relates to the released app
 
-The released app (`main`) keeps shipping small features and bugfixes via Sparkle auto-update.
-The `thesis` branch **merges `main` in regularly** (never rebases) so the thesis work always
-builds on the current app rather than a stale fork. When a thesis feature is complete it merges
-back to `main` with a true merge commit (`--no-ff`, never squash), preserving every commit.
+The released app (`main`) contains **all normal product development**: the installed app, product
+page/website, branding and icons, bug fixes, features, and releases. The `thesis` branch merges
+`main` in regularly (never rebases), so those Main-owned files also appear in the Thesis working
+tree. Their presence there does not make them thesis work; attribution follows their originating
+Main commits.
+
+Only research-specific deltas are committed directly on `thesis`, with `Thesis-Component:` trailers.
+The completed thesis integrates back into `main` only after explicit user approval, using a true
+`--no-ff` merge and never a squash.
