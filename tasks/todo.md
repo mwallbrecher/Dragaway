@@ -1924,7 +1924,7 @@ keep the proven URL fallback unchanged.
       stale-pasteboard guards, and one-drop-only behavior.
 - [x] **Verify build and static routing** — Debug build succeeds, `git diff --check` passes, and the
       image-first/AppKit/fallback ownership paths were inspected against the existing guards.
-- [ ] **Verify real interactions** — exercise Google Images → PNG, Safari tab/link → TXT,
-      Finder file → normal AppKit drop, cancel/outside release, and repeated mixed drags; confirm outputs
-      and diagnostic routing.
+- [x] **Verify real interactions** — user-verified Google Images → PNG, Safari tab/link → TXT,
+      Finder file → normal AppKit drop, cancel/outside release, and repeated mixed drags, including
+      the resulting outputs and diagnostic routing.
 - [x] **Capture lesson** — document the mixed-pasteboard priority rule after the correction is verified.
