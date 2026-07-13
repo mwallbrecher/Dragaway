@@ -167,6 +167,20 @@
   pasteboard flavours. If a source never sends `draggingEntered`, use a narrowly typed, cached payload
   fallback with explicit AppKit ownership handoff; never weaken the stale-pasteboard guards.
 
+### [DRAG-06] Mixed browser drags must prioritize the visible bitmap over their page URL
+- **What was wrong:** browser image-result drags can expose PNG/TIFF/JPEG data, an image promise, plain
+  text, and a source/page URL at the same time. A URL-first path materialized the page as TXT even though
+  the user visibly dragged an image.
+- **Why:** pasteboard flavours are alternative representations of one gesture, not equally authoritative
+  independent objects. Generic URL extraction loses the user's visible target when bitmap data is also
+  present, and a late-window fallback that caches only a URL repeats the same mistake outside AppKit.
+- **Fix:** centralize payload classification with the order bitmap bytes → image promise when declared
+  bytes are unavailable → HTTP(S) URL → text. Use the same typed image-or-URL decision in both the normal
+  `NSDraggingDestination` path and the Safari late-window fallback while keeping AppKit ownership and
+  one-drop guards intact.
+- **Rule:** for mixed browser pasteboards, materialize the thing visibly dragged. Bitmap/image-promise
+  representations outrank source URLs; tabs and links still resolve to URLs when no image is declared.
+
 ---
 
 ## Xcode / Build

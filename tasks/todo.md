@@ -1908,3 +1908,23 @@ the normal `NSDraggingDestination` path authoritative for Finder and every sourc
 - [x] **Verify** — build Debug; retain Finder's proven `draggingEntered` path; exercise repeated real
       Safari-tab drags through fallback hover/drop; confirm the materialized page file, enriched content,
       and live chips-stage window; inspect cancel/duplicate-drop guards and pass `git diff --check`.
+
+## Browser image vs URL drag routing (PLANNED 2026-07-12)
+
+**Goal:** materialize the thing the user visibly dragged. Browser image-result drags that expose both
+bitmap data and a source/page URL must become image files, while Safari/browser tab and link drags must
+keep the proven URL fallback unchanged.
+
+- [x] **Central payload priority** — make bitmap bytes authoritative over URL/text and support PNG,
+      TIFF, and JPEG pasteboard flavours through one shared classifier.
+- [x] **AppKit destination path** — remove the URL-first short circuit in `draggingEntered`; cache image
+      data first, fall back to an image file promise when bytes are declared but unavailable, then URL/text.
+- [x] **Late-window fallback path** — cache a typed image-or-URL payload instead of only `fallbackWebURL`,
+      while preserving the existing geometry, physical mouse-up commit, AppKit ownership handoff,
+      stale-pasteboard guards, and one-drop-only behavior.
+- [x] **Verify build and static routing** — Debug build succeeds, `git diff --check` passes, and the
+      image-first/AppKit/fallback ownership paths were inspected against the existing guards.
+- [ ] **Verify real interactions** — exercise Google Images → PNG, Safari tab/link → TXT,
+      Finder file → normal AppKit drop, cancel/outside release, and repeated mixed drags; confirm outputs
+      and diagnostic routing.
+- [x] **Capture lesson** — document the mixed-pasteboard priority rule after the correction is verified.

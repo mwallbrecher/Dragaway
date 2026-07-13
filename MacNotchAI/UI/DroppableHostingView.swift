@@ -87,22 +87,25 @@ final class DroppableHostingView: NSHostingView<OverlayView> {
 #endif
         let urls = extractURLs(from: sender.draggingPasteboard)
         if urls.isEmpty {
-            if let url = webURL(from: sender.draggingPasteboard) {
-                cachedDropURLs = []
-                cachedPayload = .webURL(url)
-                cachedHasPromise = false
-                OverlayViewModel.shared.isDragHovering = isOverPillArea(sender)
-                return .copy
-            }
             // Non-file drag (text / link / raw image) — capture the payload now while
             // the drag pasteboard is fully open; it's written to disk only on drop.
-            let payload = DropMaterializer.capture(from: sender.draggingPasteboard)
+            // Bitmap data is deliberately checked before URL: browser image drags vend
+            // both, whereas tab/link drags have no bitmap and still resolve to webURL.
+            let payload = DropMaterializer.preferredBrowserPayload(
+                from: sender.draggingPasteboard)
             let hasPromise = sender.draggingPasteboard.canReadObject(
                 forClasses: [NSFilePromiseReceiver.self], options: nil)
+            let declaresImage = DropMaterializer.declaresImage(
+                on: sender.draggingPasteboard)
             // Prefer a promise over a text-only payload: a Safari TAB drag offers
             // both a title string and a .webloc promise — the promise has the URL.
             var preferPromise = hasPromise && payload == nil
-            if hasPromise, let p = payload, case .text = p { preferPromise = true }
+            if hasPromise, let payload {
+                if payload.isText { preferPromise = true }
+                // An advertised image whose eager bytes could not be read should stay
+                // an image via its promise, never silently degrade to the page URL.
+                if declaresImage, !payload.isImage { preferPromise = true }
+            }
             if preferPromise {
                 cachedHasPromise = true
                 cachedPayload = nil
@@ -331,21 +334,5 @@ final class DroppableHostingView: NSHostingView<OverlayView> {
             return paths.map { URL(fileURLWithPath: $0) }
         }
         return []
-    }
-
-    private func webURL(from pasteboard: NSPasteboard) -> URL? {
-        if let s = pasteboard.string(forType: NSPasteboard.PasteboardType("public.url"))?
-            .trimmingCharacters(in: .whitespacesAndNewlines),
-           let url = URL(string: s), url.scheme == "http" || url.scheme == "https" {
-            return url
-        }
-        if let plist = pasteboard.propertyList(
-            forType: NSPasteboard.PasteboardType("WebURLsWithTitlesPboardType")
-        ) as? [[String]],
-           let s = plist.first?.first,
-           let url = URL(string: s), url.scheme == "http" || url.scheme == "https" {
-            return url
-        }
-        return nil
     }
 }

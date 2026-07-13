@@ -59,10 +59,11 @@ class DragMonitor: ObservableObject {
     // Safari snapshots eligible destination windows when its tab drag begins. The
     // notch pill is ordered front only AFTER the global monitor sees that drag, so
     // Safari can keep ignoring its perfectly valid NSDraggingDestination forever:
-    // no draggingEntered, no hover, no performDragOperation. Cache the URL while
+    // no draggingEntered, no hover, no performDragOperation. Cache the best browser
+    // payload (bitmap before URL) while
     // the drag pasteboard is readable and, only when AppKit never takes ownership,
     // derive hover/drop from the physical cursor + button state instead.
-    private var fallbackWebURL: URL?
+    private var fallbackPayload: DropMaterializer.Payload?
     private var appKitOwnsCurrentDrag = false
     /// Last moment the fallback hover was ON the pill. Diag showed users reliably
     /// touching the pill, then releasing 40–50pt below it — the exact 240×68 zone is
@@ -121,7 +122,7 @@ class DragMonitor: ObservableObject {
     /// later exit/re-entry, so the release fallback must never create a second drop.
     func appKitDragEntered() {
         appKitOwnsCurrentDrag = true
-        fallbackWebURL = nil
+        fallbackPayload = nil
     }
 
     /// The overlay was explicitly dismissed (notably via Escape) while a drag was
@@ -129,7 +130,7 @@ class DragMonitor: ObservableObject {
     /// incapable of reviving the hidden pill as a browser drop.
     func cancelBrowserFallback() {
 #if DEBUG
-        if fallbackWebURL != nil { dragDiag("FALLBACK CANCELLED by hideOverlay (mid-drag!)") }
+        if fallbackPayload != nil { dragDiag("FALLBACK CANCELLED by hideOverlay (mid-drag!)") }
 #endif
         clearBrowserFallback()
     }
@@ -196,13 +197,18 @@ class DragMonitor: ObservableObject {
         }
 #endif
         if hasDrag, !isDraggingFile, !RadialLauncherController.shared.isActive {
-            // Cache only a genuine HTTP(S) URL. Normal files keep using the proven
-            // AppKit destination path and therefore cannot enter this fallback.
-            fallbackWebURL = DropMaterializer.webURL(on: pb)
+            // Cache only a browser image or HTTP(S) URL. Bitmap bytes win when a
+            // browser advertises both the dragged image and its page/source URL.
+            fallbackPayload = DropMaterializer.browserFallbackPayload(from: pb)
             appKitOwnsCurrentDrag = false
 #if DEBUG
-            if let fallbackWebURL {
-                dragDiag("FALLBACK ARMED url=\(fallbackWebURL.absoluteString)")
+            switch fallbackPayload {
+            case .image(let data):
+                dragDiag("FALLBACK ARMED imageBytes=\(data.count)")
+            case .webURL(let url):
+                dragDiag("FALLBACK ARMED url=\(url.absoluteString)")
+            case .text, .none:
+                break
             }
 #endif
             let hk = HotkeyManager.shared
@@ -272,17 +278,17 @@ class DragMonitor: ObservableObject {
                 // Safari may never send draggingEntered to a window that appeared
                 // after its tab drag began. Drive the jelly directly until AppKit
                 // proves it owns this gesture.
-                if self.fallbackWebURL != nil, !self.appKitOwnsCurrentDrag {
+                if self.fallbackPayload != nil, !self.appKitOwnsCurrentDrag {
                     self.updateBrowserFallbackHover()
                     if !buttonIsDown, self.commitBrowserFallbackIfPossible() { return }
                 }
 
                 // Fast path: the source app cleared the drag pasteboard (files do this).
                 if !self.hasDroppable(on: NSPasteboard(name: .drag)) {
-                    // A cached browser URL remains valid even if its source clears the
+                    // A cached browser payload remains valid even if its source clears the
                     // live pasteboard just before mouse-up. While still pressed, keep
                     // tracking it; on release the commit attempt above is definitive.
-                    if buttonIsDown, self.fallbackWebURL != nil,
+                    if buttonIsDown, self.fallbackPayload != nil,
                        !self.appKitOwnsCurrentDrag { return }
                     self.isDraggingFile = false
                     self.stopPolling()
@@ -324,7 +330,7 @@ class DragMonitor: ObservableObject {
     // MARK: - Private – browser fallback
 
     private func updateBrowserFallbackHover() {
-        guard !appKitOwnsCurrentDrag, fallbackWebURL != nil else { return }
+        guard !appKitOwnsCurrentDrag, fallbackPayload != nil else { return }
         let point = NSEvent.mouseLocation
         let frame = DroppableHostingView.screenDropTargetFrame()
 #if DEBUG
@@ -358,19 +364,19 @@ class DragMonitor: ObservableObject {
     private func commitBrowserFallbackIfPossible() -> Bool {
 #if DEBUG
         // Name the guard that kills a commit attempt — blind guessing wasted a day.
-        if fallbackWebURL != nil || appKitOwnsCurrentDrag {
+        if fallbackPayload != nil || appKitOwnsCurrentDrag {
             let over = isReleaseNearTarget(NSEvent.mouseLocation)
-            dragDiag("FALLBACK COMMIT? appKitOwns=\(appKitOwnsCurrentDrag) url=\(fallbackWebURL != nil) dragging=\(isDraggingFile) nearTarget=\(over) mouse=\(NSEvent.mouseLocation)")
+            dragDiag("FALLBACK COMMIT? appKitOwns=\(appKitOwnsCurrentDrag) payload=\(fallbackPayload != nil) dragging=\(isDraggingFile) nearTarget=\(over) mouse=\(NSEvent.mouseLocation)")
         }
 #endif
         guard !appKitOwnsCurrentDrag,
-              let link = fallbackWebURL,
+              let payload = fallbackPayload,
               isDraggingFile,
               isReleaseNearTarget(NSEvent.mouseLocation),
-              let file = DropMaterializer.materialize(.webURL(link)) else { return false }
+              let file = DropMaterializer.materialize(payload) else { return false }
 
 #if DEBUG
-        dragDiag("FALLBACK DROP url=\(link.absoluteString)")
+        dragDiag("FALLBACK DROP output=\(file.lastPathComponent)")
 #endif
         isDraggingFile = false
         stopPolling()
@@ -392,7 +398,7 @@ class DragMonitor: ObservableObject {
     }
 
     private func clearBrowserFallback() {
-        fallbackWebURL = nil
+        fallbackPayload = nil
         appKitOwnsCurrentDrag = false
         lastFallbackHoverAt = .distantPast
 #if DEBUG
