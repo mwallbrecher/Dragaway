@@ -104,11 +104,20 @@ enum IntentText {
         return vector.map { ($0 * 1000).rounded() / 1000 }
     }
 
-    static func cosine(_ a: [Double], _ b: [Double]) -> Double {
-        guard a.count == b.count, !a.isEmpty else { return 0 }
+    /// Returns nil for INCOMPARABLE vectors (different dimensions or empty), NOT 0.
+    /// This matters: NLEmbedding.sentenceEmbedding is per-language and different
+    /// languages yield different dimensions (verified: German 640-dim, English
+    /// 512-dim). A silent 0 would make `topic_coherence` read a mixed-language
+    /// collection as "unrelated"; callers must skip nil pairs instead. Note that
+    /// even at equal dimensions these per-language models are NOT cross-lingually
+    /// aligned, so genuine cross-language topic coherence needs the multilingual
+    /// MiniLM/LaBSE drop-in (ARCHITECTURE §8/§12) — this nil-guard just stops the
+    /// current model from lying about it.
+    static func cosine(_ a: [Double], _ b: [Double]) -> Double? {
+        guard a.count == b.count, !a.isEmpty else { return nil }
         var dot = 0.0, na = 0.0, nb = 0.0
         for i in a.indices { dot += a[i] * b[i]; na += a[i] * a[i]; nb += b[i] * b[i] }
-        guard na > 0, nb > 0 else { return 0 }
+        guard na > 0, nb > 0 else { return nil }
         return dot / ((na * nb).squareRoot())
     }
 }

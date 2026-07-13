@@ -153,14 +153,18 @@ final class FeatureExtractor {
 
         // Are the collected snippets ONE research thread? Mean pairwise cosine of
         // their embeddings, mapped so 0.35 → 0 and 0.75+ → 1 (ARCHITECTURE §8).
+        // Only COMPARABLE pairs count: cross-language pairs (different NLEmbedding
+        // dimensions) return nil and are skipped — never averaged in as a spurious
+        // 0, which would falsely read a bilingual research session as incoherent.
         let vectors = recent.compactMap(\.embedding).suffix(4)
         guard vectors.count >= 2 else { return }
         var sims: [Double] = []
         for i in vectors.indices {
             for j in vectors.indices where j > i {
-                sims.append(IntentText.cosine(vectors[i], vectors[j]))
+                if let c = IntentText.cosine(vectors[i], vectors[j]) { sims.append(c) }
             }
         }
+        guard !sims.isEmpty else { return }   // no comparable pairs (e.g. all cross-language)
         let mean = sims.reduce(0, +) / Double(sims.count)
         let strength = min(1.0, max(0.0, (mean - 0.35) / 0.4))
         if strength > 0 {
