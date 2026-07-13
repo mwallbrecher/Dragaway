@@ -291,6 +291,11 @@ events (usage of language control is itself a finding). Onboarding uses the same
 - **Replay harness**: feed a trace through the pipeline deterministically (possible because
   all logic uses event time, §4). Golden traces = unit tests for intent detection; every
   threshold experiment is exactly reproducible.
+- **Read-only (capture-only) mode** (`intentReadOnly`): sensors + scorer + trace recorder run,
+  the affordance surface is fully suppressed (no whisper, no summon hotkey, no affordance log).
+  THE mode for **Phase 1 formative observation** — the signals must be captured without the
+  system perturbing the behaviour under study — and for any later data collection. Toggling it
+  live attaches/detaches the affordance layer without interrupting a recording.
 - **Study modes** (RQ2, within-subjects): condition switcher A: chat-mediated · B: drag
   (today's Dragaway) · C: intent-mediated. Logged outcomes: accepted / dismissed / ignored +
   task timings; **in-situ prompts** ("helpful? intrusive?") after each affordance interaction,

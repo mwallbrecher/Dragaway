@@ -422,6 +422,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                              title: engineRunning ? "Stop Signal Capture" : "Start Signal Capture",
                              action: #selector(menuIntentToggle))
         toggle.state = engineRunning ? .on : .off
+        let readOnly = addItem(to: intentSub, title: "Read-Only Capture (no affordances)",
+                               action: #selector(menuIntentReadOnly))
+        readOnly.state = IntentEngine.shared.isReadOnly ? .on : .off
         let recording = IntentEngine.shared.recorder.isRecording
         let record = addItem(to: intentSub,
                              title: recording
@@ -1779,6 +1782,10 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     @objc private func menuIntentToggle() {
         IntentEngine.shared.isEnabled.toggle()   // setter starts/stops the live engine
+    }
+
+    @objc private func menuIntentReadOnly() {
+        IntentEngine.shared.isReadOnly.toggle()  // attaches/detaches affordances live
     }
 
     @objc private func menuIntentRecord() {

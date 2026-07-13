@@ -25,6 +25,7 @@ final class IntentEngine {
     static let verboseKey     = "intentEngineVerbose"
     static let axSensorKey    = "intentAXSensorEnabled"
     static let axPromptedKey  = "intentAXPromptRequested"
+    static let readOnlyKey    = "intentReadOnly"
 
     let bus = SignalBus()
     let recorder = TraceRecorder()
@@ -49,7 +50,11 @@ final class IntentEngine {
         pipelineSink = bus.events.sink { [weak self] event in
             guard let self else { return }
             self.extractor.handle(event)
-            if self.isRunning { self.affordances.evaluate(at: event.t) }
+            // Read-only mode: sensors + scorer + recorder run, but the affordance
+            // surface never reacts — pure capture, no whisper. This is the formative
+            // (Phase 1) and general data-collection mode; observing behaviour must
+            // not be perturbed by the thing we're studying.
+            if self.isRunning, !self.isReadOnly { self.affordances.evaluate(at: event.t) }
         }
         // Re-check the AX grant whenever the app becomes active — the user coming
         // back after granting in System Settings is exactly this moment (there is
@@ -77,13 +82,32 @@ final class IntentEngine {
         if UserDefaults.standard.bool(forKey: Self.enabledKey) { start() }
     }
 
+    /// Read-only (capture-only) mode: sensors + scorer + trace recorder run; the
+    /// affordance surface (passive whisper, summon hotkey, affordance log) is fully
+    /// suppressed. THE mode for formative observation and any data collection where
+    /// the system must not influence what the user does. Persisted; toggling it while
+    /// running attaches/detaches the affordance layer WITHOUT stopping a live
+    /// recording.
+    var isReadOnly: Bool {
+        get { UserDefaults.standard.bool(forKey: Self.readOnlyKey) }
+        set {
+            UserDefaults.standard.set(newValue, forKey: Self.readOnlyKey)
+            guard isRunning else { return }
+            if newValue {
+                affordances.stop()          // tear down whisper/summon/log now
+            } else {
+                affordances.start()         // re-arm the affordance surface
+            }
+        }
+    }
+
     func start() {
         guard !isRunning else { return }
         sensors = [ClipboardSensor(), AppFocusSensor(), DwellSensor()]
         sensors.forEach { $0.start(bus: bus) }
         isRunning = true
         reconcileSensors()   // attaches the SelectionSensor when flag + grant align
-        affordances.start()  // summon hotkey + affordance log
+        if !isReadOnly { affordances.start() }   // summon hotkey + affordance log
 
 #if DEBUG
         if UserDefaults.standard.bool(forKey: Self.verboseKey) {
