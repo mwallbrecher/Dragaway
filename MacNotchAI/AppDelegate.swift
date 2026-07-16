@@ -446,6 +446,10 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         ax.state = (axOn && axTrusted) ? .on : .off
         addItem(to: intentSub, title: "Summon Intent Ticker (⌃⌥⌘I)", action: #selector(menuIntentTicker))
         intentSub.addItem(.separator())
+        let langItem = NSMenuItem(title: "Participant Languages…", action: nil, keyEquivalent: "")
+        langItem.submenu = buildParticipantLanguagesMenu()
+        intentSub.addItem(langItem)
+        intentSub.addItem(.separator())
         addItem(to: intentSub, title: "Run Golden Checks", action: #selector(menuIntentGoldenChecks))
         addItem(to: intentSub, title: "Open Intent Config", action: #selector(menuIntentOpenConfig))
         addItem(to: intentSub, title: "Reload Intent Config", action: #selector(menuIntentReloadConfig))
@@ -1857,6 +1861,61 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     @objc private func menuIntentTicker() {
         IntentEngine.shared.affordances.toggleTicker()
+    }
+
+    /// THESIS: the participant's language repertoire — what `foreign_language_clip` is
+    /// judged against. Sessions run on the RESEARCHER's Mac, so the machine locale is
+    /// always the wrong answer; this menu is the per-participant setup step.
+    private func buildParticipantLanguagesMenu() -> NSMenu {
+        let menu = NSMenu()
+        let engine = IntentEngine.shared
+
+        addInfoItem(to: menu, title: engine.languageSourceDescription)
+        if let warning = engine.languageConfigWarning { addInfoItem(to: menu, title: warning) }
+        menu.addItem(.separator())
+
+        for lang in IntentEngine.commonLanguages {
+            let item = addItem(to: menu, title: "\(lang.name) (\(lang.code))",
+                               action: #selector(menuIntentToggleLanguage(_:)),
+                               represented: lang.code)
+            item.state = engine.isLanguageSelected(lang.code) ? .on : .off
+        }
+
+        // "Indian" is not a detectable language — the recognizer distinguishes these
+        // individually, so the operator picks the specific one(s) the participant reads.
+        let indian = NSMenuItem(title: "Indian languages…", action: nil, keyEquivalent: "")
+        let indianSub = NSMenu()
+        for lang in IntentEngine.indianLanguages {
+            let item = addItem(to: indianSub, title: "\(lang.name) (\(lang.code))",
+                               action: #selector(menuIntentToggleLanguage(_:)),
+                               represented: lang.code)
+            item.state = engine.isLanguageSelected(lang.code) ? .on : .off
+        }
+        indian.submenu = indianSub
+        menu.addItem(indian)
+
+        menu.addItem(.separator())
+        let englishOnly = addItem(to: menu, title: "None — native English only",
+                                  action: #selector(menuIntentLanguagesEnglishOnly))
+        englishOnly.state = (engine.hasExplicitLanguages
+                             && IntentText.userLanguages == ["en"]) ? .on : .off
+        let locale = addItem(to: menu, title: "Use this Mac's locale (⚠︎ not for sessions)",
+                             action: #selector(menuIntentLanguagesUseLocale))
+        locale.state = engine.hasExplicitLanguages ? .off : .on
+        return menu
+    }
+
+    @objc private func menuIntentToggleLanguage(_ sender: NSMenuItem) {
+        guard let code = sender.representedObject as? String else { return }
+        IntentEngine.shared.toggleLanguage(code)
+    }
+
+    @objc private func menuIntentLanguagesEnglishOnly() {
+        IntentEngine.shared.setUserLanguages(["en"])
+    }
+
+    @objc private func menuIntentLanguagesUseLocale() {
+        IntentEngine.shared.clearUserLanguages()
     }
 
     @objc private func menuIntentGoldenChecks() {

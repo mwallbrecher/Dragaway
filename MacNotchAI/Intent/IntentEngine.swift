@@ -182,9 +182,65 @@ final class IntentEngine {
     var languageSourceDescription: String {
         let langs = IntentText.userLanguages.sorted().joined(separator: ", ")
         return IntentText.userLanguagesOverride == nil
-            ? "⚠️ from THIS MACHINE's locale: [\(langs)] — set userLanguages in IntentConfig for a study session"
+            ? "⚠️ from THIS MACHINE's locale: [\(langs)] — set the participant's languages for a study session"
             : "from IntentConfig (explicit): [\(langs)]"
     }
+
+    // MARK: Participant language repertoire (study menu)
+    //
+    // Codes are ISO-639-1 exactly as NLLanguageRecognizer reports them — all of the
+    // below were verified to detect at confidence 1.00 on sample text, so every entry
+    // here actually does something.
+    //
+    // NB "Indian" is not a language: the detector distinguishes Hindi, Tamil, Bengali,
+    // … individually, so the operator ticks the specific one(s) the participant reads.
+
+    static let commonLanguages: [(code: String, name: String)] = [
+        ("en", "English"), ("de", "German"), ("es", "Spanish"), ("fr", "French"),
+        ("it", "Italian"), ("pt", "Portuguese"), ("nl", "Dutch"), ("pl", "Polish"),
+        ("tr", "Turkish"), ("ru", "Russian"), ("ar", "Arabic"), ("zh", "Chinese"),
+        ("ja", "Japanese"), ("ko", "Korean"),
+    ]
+
+    static let indianLanguages: [(code: String, name: String)] = [
+        ("hi", "Hindi"), ("bn", "Bengali"), ("ta", "Tamil"), ("te", "Telugu"),
+        ("mr", "Marathi"), ("gu", "Gujarati"), ("kn", "Kannada"), ("ml", "Malayalam"),
+        ("pa", "Punjabi"), ("ur", "Urdu"),
+    ]
+
+    /// nil override ⇒ we are still on the machine locale (never valid for a session).
+    var hasExplicitLanguages: Bool { IntentText.userLanguagesOverride != nil }
+
+    func isLanguageSelected(_ code: String) -> Bool {
+        hasExplicitLanguages && IntentText.userLanguages.contains(code)
+    }
+
+    /// Every stimulus except Task 1's is in English, so a repertoire without English
+    /// would make ordinary Task 2/3 copies flag as foreign — spurious translation
+    /// evidence inside the comprehension/discovery tasks.
+    var languageConfigWarning: String? {
+        guard hasExplicitLanguages else { return nil }
+        return IntentText.userLanguages.contains("en")
+            ? nil
+            : "⚠️ English not set — Task 2/3 copies will falsely flag as foreign"
+    }
+
+    func toggleLanguage(_ code: String) {
+        var langs = hasExplicitLanguages ? IntentText.userLanguages : []
+        if langs.contains(code) { langs.remove(code) } else { langs.insert(code) }
+        setUserLanguages(langs.sorted())
+    }
+
+    /// Persists to IntentConfig.json (same file the operator could hand-edit) and
+    /// pushes the override into IntentText immediately.
+    func setUserLanguages(_ codes: [String]) {
+        scorer.config.userLanguages = codes
+        scorer.config.save()
+        Self.applyLanguageConfig(scorer.config)
+    }
+
+    /// Back to the machine locale — correct for a distributed build, never for a session.
+    func clearUserLanguages() { setUserLanguages([]) }
 
     /// Score snapshot with "why" decomposition. `at` defaults to now, which equals
     /// event time for live capture; pass the trace's last event time after a replay
