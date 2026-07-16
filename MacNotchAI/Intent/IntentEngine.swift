@@ -43,6 +43,7 @@ final class IntentEngine {
         let scorer = IntentScorer(config: .load())
         self.scorer = scorer
         affordances = AffordanceController(scorer: scorer, extractor: extractor)
+        Self.applyLanguageConfig(scorer.config)
         // L2/L3 are ALWAYS attached: live capture and trace replay take the same
         // path. L4/L5 (the affordance surface) only reacts while the engine is
         // RUNNING — a replay must never pop UI out of historical events.
@@ -164,7 +165,25 @@ final class IntentEngine {
 
     func reloadConfig() {
         scorer.config = .load()
+        Self.applyLanguageConfig(scorer.config)
         affordances.configReloaded()   // re-seed mutes; tier/θ are read live
+    }
+
+    /// Push the configured language repertoire into IntentText. Empty config ⇒ nil
+    /// override ⇒ IntentText falls back to the machine locale (right for a distributed
+    /// build, wrong for a study session — see IntentConfig.userLanguages).
+    private static func applyLanguageConfig(_ config: IntentConfig) {
+        let langs = config.normalisedUserLanguages
+        IntentText.userLanguagesOverride = langs.isEmpty ? nil : langs
+    }
+
+    /// What "foreign" currently means, for the debug menu — the study operator must be
+    /// able to see, before a session, whose languages the flag is judging against.
+    var languageSourceDescription: String {
+        let langs = IntentText.userLanguages.sorted().joined(separator: ", ")
+        return IntentText.userLanguagesOverride == nil
+            ? "⚠️ from THIS MACHINE's locale: [\(langs)] — set userLanguages in IntentConfig for a study session"
+            : "from IntentConfig (explicit): [\(langs)]"
     }
 
     /// Score snapshot with "why" decomposition. `at` defaults to now, which equals

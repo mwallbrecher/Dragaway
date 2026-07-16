@@ -18,8 +18,25 @@ enum IntentText {
         let embedding: [Double]?
     }
 
-    /// User's languages ("de", "en", …) — anything else counts as foreign.
-    static let userLanguages: Set<String> = Set(
+    // MARK: User language repertoire
+    //
+    // "Foreign" is relative to the PERSON, not the machine. Locale.preferredLanguages is
+    // only a proxy and a poor one: plenty of people run macOS in English regardless of
+    // their mother tongue, so it produces false "foreign" flags (and misses real ones).
+    //
+    // It breaks outright in a study session: Phase 1 runs on the RESEARCHER's Mac, so
+    // every participant would inherit the researcher's locale — `foreign_language_clip`
+    // would fire (or not) identically for everyone regardless of the languages they
+    // actually read, silently voiding that feature's data. Hence the explicit override,
+    // set per participant from IntentConfig.userLanguages.
+
+    /// Explicit repertoire (set from IntentConfig). nil ⇒ fall back to the machine locale.
+    static var userLanguagesOverride: Set<String>?
+
+    /// Languages the user reads comfortably; anything else counts as foreign.
+    static var userLanguages: Set<String> { userLanguagesOverride ?? localeLanguages }
+
+    private static let localeLanguages: Set<String> = Set(
         Locale.preferredLanguages.compactMap { $0.split(separator: "-").first.map(String.init) }
     )
 

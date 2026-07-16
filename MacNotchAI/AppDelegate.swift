@@ -1835,7 +1835,11 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     @objc private func menuIntentScores() {
         let alert = NSAlert()
         alert.messageText = "Intent scores (live)"
+        // The language source is shown here on purpose: before a study session the
+        // operator must be able to see whose languages "foreign" is judged against.
         alert.informativeText = IntentEngine.shared.scoresDescription()
+            + "\n\n— foreign-language reference —\n"
+            + IntentEngine.shared.languageSourceDescription
         alert.runModal()
     }
 

@@ -223,6 +223,29 @@ enum IntentGoldenChecks {
                                 detail: "blocked at \(cfg.rateLimitPerHour)/h=\(blocked), freed after window=\(later)"))
         }
 
+        // 14 · "Foreign" follows the CONFIGURED repertoire, not the machine locale.
+        //      This is the one the study depends on: Phase 1 runs on the researcher's
+        //      Mac, so without the override every participant inherits the researcher's
+        //      languages and foreign_language_clip is meaningless. Uses real German text
+        //      through the real NaturalLanguage detector.
+        do {
+            let saved = IntentText.userLanguagesOverride
+            defer { IntentText.userLanguagesOverride = saved }   // never leak into the live engine
+
+            let german = "Die IT-Migration verzögert sich um drei bis vier Wochen wegen des CMS-Wechsels."
+
+            IntentText.userLanguagesOverride = ["en"]            // participant reads English only
+            let foreignForEnglishReader = IntentText.scalars(for: german, withEmbedding: false).isForeignLanguage
+
+            IntentText.userLanguagesOverride = ["de", "en"]      // participant also reads German
+            let foreignForGermanReader = IntentText.scalars(for: german, withEmbedding: false).isForeignLanguage
+
+            let pass = foreignForEnglishReader && !foreignForGermanReader
+            checks.append(Check(name: "14 foreign flag follows configured languages", pass: pass,
+                                detail: "German text — reader[en]: foreign=\(foreignForEnglishReader) (want true), "
+                                      + "reader[de,en]: foreign=\(foreignForGermanReader) (want false)"))
+        }
+
         return checks
     }
 

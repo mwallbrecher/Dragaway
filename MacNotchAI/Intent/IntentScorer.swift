@@ -36,6 +36,13 @@ struct IntentConfig: Codable {
     var rateLimits: [String: Int] = ["lazy": 3, "balanced": 6, "aggressive": 12]
     /// "class|bundleID" pairs the user muted ("do not suggest again").
     var mutes: [String] = []
+    /// Languages the USER reads comfortably ("de", "en", …). Empty ⇒ derive from the
+    /// machine locale. **Must be set explicitly for every study session**: Phase 1 runs
+    /// on the researcher's Mac, so participants would otherwise all inherit the
+    /// researcher's locale and `foreign_language_clip` would be meaningless. For a
+    /// distributed build the locale fallback is the sensible default (refined by the
+    /// M4 onboarding question).
+    var userLanguages: [String] = []
 
     // Initial values, calibrated against the synthetic design targets (validated by
     // the standalone scorer test; refine against golden traces):
@@ -82,7 +89,7 @@ struct IntentConfig: Codable {
 
     private enum CodingKeys: String, CodingKey {
         case v, tier, basePriorLogOdds, priorOffsets, weights, taus, thresholds,
-             dismissCooldownSeconds, rateLimits, mutes
+             dismissCooldownSeconds, rateLimits, mutes, userLanguages
     }
 
     init(from decoder: Decoder) throws {
@@ -98,6 +105,14 @@ struct IntentConfig: Codable {
         dismissCooldownSeconds = try c.decodeIfPresent(Double.self, forKey: .dismissCooldownSeconds) ?? d.dismissCooldownSeconds
         rateLimits             = try c.decodeIfPresent([String: Int].self, forKey: .rateLimits) ?? d.rateLimits
         mutes                  = try c.decodeIfPresent([String].self, forKey: .mutes) ?? d.mutes
+        userLanguages          = try c.decodeIfPresent([String].self, forKey: .userLanguages) ?? d.userLanguages
+    }
+
+    /// Normalised repertoire ("DE-de" → "de"); empty ⇒ caller falls back to the locale.
+    var normalisedUserLanguages: Set<String> {
+        Set(userLanguages
+            .map { String($0.prefix(2)).lowercased() }
+            .filter { $0.count == 2 && $0.allSatisfy(\.isLetter) })
     }
 
     // MARK: persistence — a hand-editable JSON next to the traces
@@ -149,6 +164,14 @@ struct IntentConfig: Codable {
         for (k, v) in c.rateLimits where !(1...60).contains(v) {
             let fixed = k == "lazy" ? 3 : (k == "aggressive" ? 12 : 6)
             notes.append("rateLimit \(k)=\(v) → \(fixed)"); c.rateLimits[k] = fixed
+        }
+        let badLangs = c.userLanguages.filter {
+            let code = String($0.prefix(2)).lowercased()
+            return code.count != 2 || !code.allSatisfy(\.isLetter)
+        }
+        if !badLangs.isEmpty {
+            notes.append("userLanguages dropped invalid: \(badLangs.joined(separator: ","))")
+            c.userLanguages = c.userLanguages.filter { !badLangs.contains($0) }
         }
         return (c, notes)
     }
