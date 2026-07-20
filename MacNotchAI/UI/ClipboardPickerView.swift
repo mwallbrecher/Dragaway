@@ -5,8 +5,9 @@ import SwiftUI
 //
 // A floating, borderless panel listing the last 10 clipboard captures. Opened by the
 // Carbon ⌃⌘V hotkey (GlobalHotkey → ClipboardPicker.toggle). Pick a row — by click or by
-// pressing its number key (1…9, 0 for the tenth) — to COPY it back to the system
-// pasteboard (the user then presses ⌘V themselves; we never synthesise keystrokes).
+// pressing its number key (1…9, 0 for the tenth) — to copy it back and return focus to
+// the previously active app. Enhanced Access can then post one Command-V; without it,
+// the user presses ⌘V themselves.
 //
 // Dismiss: Esc, a click outside the panel, or the panel losing key (app switch). The panel
 // is `canBecomeKey` so a local keyDown monitor can claim the digit/Esc keys while it's open.
@@ -42,6 +43,16 @@ final class ClipboardPicker: NSObject, NSWindowDelegate {
     private var panel: ClipboardPickerPanel?
     private var keyMonitor: Any?
     private var outsideClickMonitor: Any?
+    /// External app that was frontmost before the picker activated Dragaway.
+    private var returnApplication: NSRunningApplication?
+    /// One-shot state for an auto-paste waiting on the exact target app to activate.
+    private var pendingPasteToken: UUID?
+    private var pendingPasteTarget: NSRunningApplication?
+    private var activationObserver: NSObjectProtocol?
+    /// Prevent a programmatic `orderOut` from being mistaken for a user focus change.
+    private var isOrderingOut = false
+    /// An app-modal alert temporarily takes key status but is still part of the picker flow.
+    private var isPresentingModal = false
 
     private let baseWidth: CGFloat   = 380
     private let rowHeight: CGFloat   = 54
@@ -51,10 +62,24 @@ final class ClipboardPicker: NSObject, NSWindowDelegate {
     // MARK: Show / hide / toggle
 
     func toggle() {
-        if panel?.isVisible == true { hide() } else { show() }
+        guard !isPresentingModal else { return }
+        if panel?.isVisible == true { cancel() } else { show() }
     }
 
     func show() {
+        cancelPendingPaste()
+
+        // Capture this BEFORE activating our panel. If Dragaway is already frontmost
+        // (for example while Settings is open), there is no external app to restore.
+        let currentPID = NSRunningApplication.current.processIdentifier
+        if let frontmost = NSWorkspace.shared.frontmostApplication,
+           frontmost.processIdentifier != currentPID,
+           !frontmost.isTerminated {
+            returnApplication = frontmost
+        } else {
+            returnApplication = nil
+        }
+
         let s = UIScale.current.multiplier
         let count = min(ClipboardHistoryStore.shared.items.count, 10)
 
@@ -90,16 +115,142 @@ final class ClipboardPicker: NSObject, NSWindowDelegate {
         startMonitors()
     }
 
+    /// Passive dismissal (outside click / app switch): respect the user's new focus.
     func hide() {
-        stopMonitors()
-        panel?.orderOut(nil)
+        returnApplication = nil
+        cancelPendingPaste()
+        dismissPanel()
     }
 
-    /// Copy the chosen entry back to the system pasteboard and dismiss. The user pastes
-    /// it themselves with ⌘V — we never synthesise the keystroke.
+    /// Explicit cancellation (Esc / second hotkey): return to the original app but
+    /// never paste anything.
+    func cancel() {
+        let target = takeReturnApplication()
+        cancelPendingPaste()
+        dismissPanel()
+        restoreFocus(to: target, autoPaste: false)
+    }
+
+    /// Preserve the return target while an NSAlert temporarily becomes key.
+    func beginModalInteraction() {
+        isPresentingModal = true
+        stopMonitors()
+    }
+
+    func endModalInteraction() {
+        isPresentingModal = false
+        cancel()
+    }
+
+    private func dismissPanel() {
+        stopMonitors()
+        isOrderingOut = true
+        panel?.orderOut(nil)
+        isOrderingOut = false
+    }
+
+    /// Copy the chosen entry, dismiss, restore the previous app, then conditionally
+    /// paste once after that exact app is confirmed frontmost.
     func pick(_ item: ClipItem) {
-        ClipboardHistoryStore.shared.copyToPasteboard(item)
-        hide()
+        let target = takeReturnApplication()
+        cancelPendingPaste()
+        let copied = ClipboardHistoryStore.shared.copyToPasteboard(item)
+        dismissPanel()
+
+        if !copied { NSSound.beep() }
+        restoreFocus(to: target, autoPaste: copied && EnhancedAccess.canPostEvents)
+    }
+
+    private func takeReturnApplication() -> NSRunningApplication? {
+        defer { returnApplication = nil }
+        return returnApplication
+    }
+
+    private func restoreFocus(to target: NSRunningApplication?, autoPaste: Bool) {
+        guard let target, !target.isTerminated else { return }
+
+        let current = NSRunningApplication.current
+        let token = autoPaste ? armPasteAfterActivation(of: target) : nil
+
+        // macOS 14 cooperative activation: explicitly yield our active status, then
+        // ask the remembered app to take it. This needs no Accessibility permission.
+        NSApp.yieldActivation(to: target)
+        let accepted = target.activate(from: current, options: [])
+        guard accepted else {
+            cancelPendingPaste()
+            return
+        }
+
+        // Activation may already have completed before its workspace notification is
+        // delivered. Check on the next main-runloop turn as well; the token makes both
+        // paths mutually exclusive.
+        if let token {
+            DispatchQueue.main.async { [weak self] in
+                self?.completePendingPasteIfReady(token: token)
+            }
+        }
+    }
+
+    private func armPasteAfterActivation(of target: NSRunningApplication) -> UUID {
+        cancelPendingPaste()
+        let token = UUID()
+        pendingPasteToken = token
+        pendingPasteTarget = target
+
+        activationObserver = NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.didActivateApplicationNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                self?.handleActivationWhilePastePending(token: token)
+            }
+        }
+
+        // A failed/blocked activation must never leave a future unrelated app switch
+        // capable of triggering the stale paste.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
+            guard self?.pendingPasteToken == token else { return }
+            self?.cancelPendingPaste()
+        }
+        return token
+    }
+
+    private func handleActivationWhilePastePending(token: UUID) {
+        guard pendingPasteToken == token,
+              let target = pendingPasteTarget,
+              let frontmost = NSWorkspace.shared.frontmostApplication
+        else { return }
+
+        if frontmost.processIdentifier == target.processIdentifier {
+            completePendingPasteIfReady(token: token)
+        } else if frontmost.processIdentifier != NSRunningApplication.current.processIdentifier {
+            // The user or the system chose a third app before the target was ready.
+            // Cancel immediately so returning to the target later cannot paste stale data.
+            cancelPendingPaste()
+        }
+    }
+
+    private func completePendingPasteIfReady(token: UUID) {
+        guard pendingPasteToken == token,
+              let target = pendingPasteTarget,
+              !target.isTerminated,
+              NSWorkspace.shared.frontmostApplication?.processIdentifier == target.processIdentifier
+        else { return }
+
+        // Clear first so an activation notification and the next-runloop check can
+        // never both post. EnhancedAccess re-checks opt-in + TCC immediately after.
+        cancelPendingPaste()
+        EnhancedAccess.postPasteShortcut()
+    }
+
+    private func cancelPendingPaste() {
+        if let observer = activationObserver {
+            NSWorkspace.shared.notificationCenter.removeObserver(observer)
+            activationObserver = nil
+        }
+        pendingPasteToken = nil
+        pendingPasteTarget = nil
     }
 
     // MARK: Panel + monitors
@@ -132,7 +283,7 @@ final class ClipboardPicker: NSObject, NSWindowDelegate {
 
     /// Returns nil to swallow a handled key (digit / Esc); the event unchanged otherwise.
     private func handleKey(_ event: NSEvent) -> NSEvent? {
-        if event.keyCode == 53 { hide(); return nil }   // Esc
+        if event.keyCode == 53 { cancel(); return nil }   // Esc
         // Ignore modified chords — only bare digits select.
         guard event.modifierFlags.intersection(.deviceIndependentFlagsMask).isEmpty,
               let chars = event.charactersIgnoringModifiers, chars.count == 1,
@@ -145,7 +296,10 @@ final class ClipboardPicker: NSObject, NSWindowDelegate {
     }
 
     // Losing key (app switch, ⌘Tab) dismisses — mirrors a menu's click-away behaviour.
-    func windowDidResignKey(_ notification: Notification) { hide() }
+    func windowDidResignKey(_ notification: Notification) {
+        guard !isOrderingOut, !isPresentingModal, panel?.isVisible == true else { return }
+        hide()
+    }
 }
 
 // MARK: - SwiftUI list
@@ -219,10 +373,11 @@ struct ClipboardPickerView: View {
 
     /// Confirm-then-wipe all clipboard history (no undo), then dismiss the picker.
     private func clearHistory() {
+        ClipboardPicker.shared.beginModalInteraction()
+        defer { ClipboardPicker.shared.endModalInteraction() }
         if confirmDestructive(title: "Clear Clipboard History?", confirmTitle: "Clear History") {
             ClipboardHistoryStore.shared.clear()
         }
-        ClipboardPicker.shared.hide()
     }
 
     private var emptyState: some View {

@@ -2,6 +2,9 @@ import Foundation
 
 enum AIError: LocalizedError {
     case noAPIKey(provider: String)
+    case invalidConfiguration(String)
+    case modelUnavailable(provider: String, model: String)
+    case imageInputUnsupported(provider: String, model: String)
     case apiError(String)
     case httpError(Int)
 
@@ -9,6 +12,12 @@ enum AIError: LocalizedError {
         switch self {
         case .noAPIKey(let provider):
             return "No API key for \(provider). Open Settings (⌘,) to add one."
+        case .invalidConfiguration(let message):
+            return message
+        case .modelUnavailable(let provider, let model):
+            return "\(model) is no longer available from \(provider). Open Provider Settings, refresh the model list, and choose another model."
+        case .imageInputUnsupported(let provider, let model):
+            return "\(model) does not support image input on \(provider). Choose a vision-capable model in Provider Settings."
         case .apiError(let msg):
             return msg
         case .httpError(let code):

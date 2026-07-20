@@ -47,11 +47,16 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     // MARK: - Launch
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        // Dragaway requests NO permissions. Drag detection, hotkeys, and the radial
-        // launcher all use ungated APIs (drag-pasteboard polling, mouse monitors,
-        // Carbon hotkeys); Esc dismissal rides the responder chain
-        // (OverlayWindow.cancelOperation). Keep it that way — the last gated API
-        // (a global keyDown monitor) was removed deliberately.
+        // Run the one-time hard-coded-model migration before onboarding can flip its
+        // completion flag. That lets fresh installs use a current starting model while
+        // existing installations keep their exact previous route.
+        _ = AIModelCatalogStore.shared
+
+        // Core Dragaway behavior requests no permissions. Drag detection, hotkeys,
+        // the radial launcher, and Esc all use ungated APIs. The sole exception is
+        // the default-off Enhanced Access setting: after explicit user intent it can
+        // request event-posting access for Clipboard History paste-on-pick. Never
+        // make any core path depend on that optional permission.
         DragMonitor.shared.startMonitoring()
         observeDragState()
         observeDragOutState()
@@ -130,6 +135,10 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             self, selector: #selector(handleShowScripts),
             name: .showScripts, object: nil
         )
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(handleShowAIProvider),
+            name: .showAIProvider, object: nil
+        )
 
         // Finder "Add to Dragaway" Quick Action → opens Stage 2 with the selected files.
         NotificationCenter.default.addObserver(
@@ -184,6 +193,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     @objc private func handleShowFavoriteTools() { showSettings(section: .favoriteTools) }
     @objc private func handleShowOutputDirectory() { showSettings(section: .outputDirectory) }
     @objc private func handleShowScripts() { showSettings(section: .scripts) }
+    @objc private func handleShowAIProvider() { showSettings(section: .aiProvider) }
 
     // MARK: - Finder "Add to Dragaway" Quick Action
 
@@ -225,6 +235,12 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         dismissToken       = UUID()
         isWindowDismissing = false
 
+        // A promised file can arrive after dragCompleted() scheduled the Stage-1
+        // dismissal. Revive the shared view model explicitly so an early handoff
+        // cannot inherit `isCollapsing == true` and open an invisible chips card.
+        let vm = OverlayViewModel.shared
+        vm.isCollapsing = false
+
         if overlayWindow == nil {
             let window = OverlayWindow()
             window.contentView = DroppableHostingView(
@@ -233,10 +249,15 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             overlayWindow = window
         }
 
-        OverlayViewModel.shared.setChips(urls: supported)
-        let (size, anchorLeft) = sizeForStage(OverlayViewModel.shared.stage)
+        vm.setChips(urls: supported)
+        if supported.allSatisfy(FileInspector.isEmailFile) {
+            let charLimit = EntitlementStore.shared.isPremiumUnlocked
+                ? FileContentExtractor.maxCharsPro : FileContentExtractor.maxChars
+            vm.prepareBaseContext(for: supported, charLimit: charLimit)
+        }
+        let (size, anchorLeft) = sizeForStage(vm.stage)
         overlayWindow?.alphaValue = 1
-        OverlayViewModel.shared.windowShown = true
+        vm.windowShown = true
         overlayWindow?.place(size: size, anchorAtNotchCenter: anchorLeft)
         // Grab key + activate so the card opens FOCUSED (type right away). Losing focus
         // later is fine — the overlay stays vivid via the forced controlActiveState.
@@ -355,6 +376,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         addItem(to: menu, title: "Window Size",   action: #selector(menuWindowSize))
         addItem(to: menu, title: "Custom Prompts", action: #selector(menuCustomPrompts))
         addItem(to: menu, title: "Favorite Tools", action: #selector(menuFavoriteTools))
+        addItem(to: menu, title: "Enhanced Access", action: #selector(menuEnhancedAccess))
 
         // ── Recent sessions (file + AI conversation, last 10) ───────────────────
         let historyItem = NSMenuItem(title: "Recent Sessions", action: nil, keyEquivalent: "")
@@ -674,11 +696,12 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     // MARK: Menu actions
 
     @objc private func menuUpgrade()     { EntitlementStore.shared.startUpgrade() }
-    @objc private func menuChangeModel()  { NotificationCenter.default.post(name: .showOnboarding, object: nil) }
+    @objc private func menuChangeModel()  { showSettings(section: .aiProvider) }
     @objc private func menuOpenSettings() { showSettings() }
     @objc private func menuWindowSize()    { showSettings(section: .windowSize) }
     @objc private func menuCustomPrompts() { showSettings(section: .customPrompt) }
     @objc private func menuFavoriteTools() { showSettings(section: .favoriteTools) }
+    @objc private func menuEnhancedAccess() { showSettings(section: .enhancedAccess) }
     @objc private func menuReEnable()     { UserDefaults.standard.set(0, forKey: "disabledUntil") }
     @objc private func menuDisableUntil(_ sender: NSMenuItem) {
         guard let ts = sender.representedObject as? TimeInterval else { return }
@@ -1477,9 +1500,10 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 let toolH = FavoriteToolsStore.shared
                     .resolvedTools(for: OverlayViewModel.shared.sessionFileURLs).isEmpty
                     ? ChipsLayout.toolHintHeight : ChipsLayout.toolRowHeight
-                // header(50) + spacing(10) + tabBar + spacing(10) + content + spacing(10)
+                // header + spacing(10) + tabBar + spacing(10) + content + spacing(10)
                 // + toolRow + padding(36)  — no prompt field, no collapsed branch.
-                let h = (50 + 10 + ChipsLayout.tabBarHeight + 10 + contentH + 10 + toolH + 36) * s
+                let h = (ChipsLayout.fileHeaderHeight + 10 + ChipsLayout.tabBarHeight + 10
+                         + contentH + 10 + toolH + 36) * s
                 return (CGSize(width: 280 * s, height: max(h, 200 * s)), true)
             }
             if OverlayViewModel.shared.isChipsExpanded {
@@ -1501,34 +1525,35 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 let toolH = FavoriteToolsStore.shared
                     .resolvedTools(for: OverlayViewModel.shared.sessionFileURLs).isEmpty
                     ? ChipsLayout.toolHintHeight : ChipsLayout.toolRowHeight
-                // header(50) + spacing(10) + tabBar + spacing(10) + content + spacing(10)
+                // header + spacing(10) + tabBar + spacing(10) + content + spacing(10)
                 // + toolRow + spacing(10) + prompt(42) + padding(36)
-                let h = (50 + 10 + ChipsLayout.tabBarHeight + 10 + contentH + 10 + toolH + 10 + 42 + 36) * s
+                let h = (ChipsLayout.fileHeaderHeight + 10 + ChipsLayout.tabBarHeight + 10
+                         + contentH + 10 + toolH + 10 + 42 + 36) * s
                 return (CGSize(width: 280 * s, height: max(h, 220 * s)), true)
             } else {
                 // Collapsed: header + spacing + prompt field + padding only
-                let h = (50 + 10 + 42 + 36) * s
-                return (CGSize(width: 280 * s, height: max(h, 148 * s)), true)
+                let h = (ChipsLayout.fileHeaderHeight + 10 + 42 + 36) * s
+                return (CGSize(width: 280 * s, height: max(h, 168 * s)), true)
             }
 
         case .loading:
-            return (CGSize(width: 500 * s, height: 280 * s), true)
+            return (CGSize(width: 500 * s, height: 310 * s), true)
 
         case .result:
             // Window is always sized to fit the full expanded layout (transcript card +
             // prompt + follow-up chips). The follow-up toggle only controls content
             // visibility inside the window — the ScrollView grows into the freed space
             // without the window frame changing at all. Height grows with the whole
-            // transcript (all turns), clamped 380…600; the card scrolls beyond that.
+            // transcript (all turns), clamped 410…600; the card scrolls beyond that.
             let convo = OverlayViewModel.shared.conversation
             let totalChars = convo.reduce(0) { $0 + $1.display.count }
             let lines = max(convo.count * 2, totalChars / 55)
             let resultH = min(CGFloat(lines) * 20, 260)
             let h = (18 + 44 + resultH + 44 + 20 + 3 * 40 + 44 + 18) * s
-            return (CGSize(width: 500 * s, height: min(max(h, 380 * s), 600 * s)), true)
+            return (CGSize(width: 500 * s, height: min(max(h, 410 * s), 600 * s)), true)
 
         case .error:
-            return (CGSize(width: 500 * s, height: 220 * s), true)
+            return (CGSize(width: 500 * s, height: 250 * s), true)
 
         case .fileResult:
             // Utility "second result stage": single column with two stacked file-detail
@@ -1655,8 +1680,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         case .favoriteTools:   h = 520
         case .outputDirectory: h = 360
         case .scripts:         h = 560
-        case .aiProvider:      h = 480
+        case .aiProvider:      h = 640
         case .clipboard:       h = 320
+        case .enhancedAccess:  h = 360
         case .help:            h = 520
         }
         return NSSize(width: 460, height: h)
@@ -1737,6 +1763,10 @@ extension Notification.Name {
     static let showFavoriteTools = Notification.Name("com.aidrop.showFavoriteTools")
     static let showOutputDirectory = Notification.Name("com.aidrop.showOutputDirectory")
     static let showScripts          = Notification.Name("com.aidrop.showScripts")
+    static let showAIProvider       = Notification.Name("com.aidrop.showAIProvider")
+    static let aiProviderConfigurationChanged = Notification.Name(
+        "com.aidrop.aiProviderConfigurationChanged"
+    )
     static let addFilesFromShare = Notification.Name("com.aidrop.addFilesFromShare")
     static let radialOpenSession = Notification.Name("com.aidrop.radialOpenSession")
     static let captureSettingsChanged = Notification.Name("com.aidrop.captureSettingsChanged")
@@ -1755,18 +1785,55 @@ func resolveProvider() -> any AIProvider {
     }
 
     let raw  = UserDefaults.standard.string(forKey: "selectedProvider") ?? ""
-    let type = AIProviderType(rawValue: raw) ?? .groq
+    guard let type = AIProviderType(rawValue: raw) else {
+        return InvalidConfigurationProvider(
+            message: "The selected AI provider is no longer recognised. Open Provider Settings and choose a provider again."
+        )
+    }
+    let catalog = AIModelCatalogStore.shared
+    let modelID = catalog.selectedModelID(for: type)
+
+    guard !catalog.selectedModelIsUnavailable(for: type) else {
+        return UnavailableModelProvider(providerName: type.displayName, modelID: modelID)
+    }
+
+    let descriptor = catalog.selectedDescriptor(for: type)
+    let supportsVision = descriptor.supportsVision ?? {
+        switch type {
+        case .gemini, .anthropic: return true
+        case .openai, .groq, .ollama: return false
+        }
+    }()
 
     switch type {
     case .groq:
-        return GroqProvider(apiKey: KeychainManager.shared.load(service: "com.aidrop.groq") ?? "")
+        return GroqProvider(
+            apiKey: KeychainManager.shared.load(service: type.keychainService) ?? "",
+            modelID: modelID,
+            supportsVision: supportsVision,
+            supportsThinking: descriptor.supportsThinking ?? false
+        )
     case .gemini:
-        return GeminiProvider(apiKey: KeychainManager.shared.load(service: "com.aidrop.gemini") ?? "")
+        return GeminiProvider(
+            apiKey: KeychainManager.shared.load(service: type.keychainService) ?? "",
+            modelID: modelID,
+            supportsVision: supportsVision,
+            supportsThinking: descriptor.supportsThinking ?? false
+        )
     case .anthropic:
-        return AnthropicProvider(apiKey: KeychainManager.shared.load(service: "com.aidrop.anthropic") ?? "")
+        return AnthropicProvider(
+            apiKey: KeychainManager.shared.load(service: type.keychainService) ?? "",
+            modelID: modelID,
+            supportsVision: supportsVision
+        )
     case .openai:
-        return OpenAIProvider(apiKey: KeychainManager.shared.load(service: "com.aidrop.openai") ?? "")
+        return OpenAIProvider(
+            apiKey: KeychainManager.shared.load(service: type.keychainService) ?? "",
+            modelID: modelID,
+            supportsVision: supportsVision,
+            supportsThinking: descriptor.supportsThinking ?? false
+        )
     case .ollama:
-        return OllamaProvider()
+        return OllamaProvider(modelID: modelID, supportsVision: supportsVision)
     }
 }

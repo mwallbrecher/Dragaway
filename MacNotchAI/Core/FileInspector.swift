@@ -38,6 +38,9 @@ struct FileInspector {
         // content signals + learned frecency, then caps the visible chips at 6 — so the
         // trailing niche actions only surface when the file actually warrants them.
         switch ext {
+        case "eml", "emlx":
+            return [.summariseEmail, .emailNextSteps, .emailDeadlinesRisks,
+                    .draftReply, .emailQuestions, .extractContacts]
         case "pdf":
             return [.summariseBullets, .extractKeyPoints, .extractKeyDates, .proofread,
                     .draftReply, .explainSimply, .extractContacts, .rephraseFormal,
@@ -132,6 +135,7 @@ struct FileInspector {
                         primary: URL?) -> [AIAction] {
         var actions = base
         let name = primary?.lastPathComponent.lowercased() ?? ""
+        let isEmailContainer = primary.map(isEmailFile) ?? false
 
         // Prose carrying a ``` code fence → make "Explain This Code" available.
         if isProse, s.hasCodeFences, !actions.contains(.explainCode) {
@@ -165,12 +169,17 @@ struct FileInspector {
             moveToFront(.slideOutline,  in: &actions)
             moveToFront(.turnIntoBrief, in: &actions)            // ends up first of these
         }
-        if s.looksLikeEmail { moveToFront(.draftReply, in: &actions) }
+        if s.looksLikeEmail, !isEmailContainer {
+            moveToFront(.draftReply, in: &actions)
+        }
 
         // Dates / money heavy → bubble extraction up.
         if s.hasManyDates || s.isMonetary {
             moveToFront(.extractKeyPoints, in: &actions)
             moveToFront(.extractKeyDates,  in: &actions)
+            if isEmailContainer {
+                moveToFront(.emailDeadlinesRisks, in: &actions)
+            }
         }
 
         // Non-English prose → lead with "Translate to English" and drop the to-<source> target.
@@ -234,7 +243,7 @@ struct FileInspector {
     /// Natural-language documents where translate / summarise / rephrase / length-tuning apply.
     /// Deliberately excludes code & structured data (csv/json/xml) and media/images.
     private static func isProseFile(_ url: URL) -> Bool {
-        ["pdf", "txt", "md", "markdown", "rtf", "docx", "doc", "pages"]
+        ["pdf", "txt", "md", "markdown", "rtf", "docx", "doc", "pages", "eml", "emlx"]
             .contains(url.pathExtension.lowercased())
     }
 
@@ -251,6 +260,10 @@ struct FileInspector {
     static func isImageFile(_ url: URL) -> Bool {
         let imageExtensions = ["png", "jpg", "jpeg", "heic", "webp", "gif", "tiff"]
         return imageExtensions.contains(url.pathExtension.lowercased())
+    }
+
+    nonisolated static func isEmailFile(_ url: URL) -> Bool {
+        ["eml", "emlx"].contains(url.pathExtension.lowercased())
     }
 
     static let videoExtensions = ["mp4", "mov", "avi", "mkv", "m4v", "wmv", "flv", "webm"]

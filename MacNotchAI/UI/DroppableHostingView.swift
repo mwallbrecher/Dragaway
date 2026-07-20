@@ -31,6 +31,10 @@ final class DroppableHostingView: NSHostingView<OverlayView> {
     /// Drag carries file PROMISES (Safari tab, Photos, Mail) — the real file is only
     /// written by the source app AFTER we accept the drop.
     private var cachedHasPromise = false
+    /// Apple Mail inbox rows advertise a legacy promise alongside the modern receiver,
+    /// which can time out without ever writing the `.eml`. Kept separate so fulfilment
+    /// and recovery can never change proven Safari / browser-image promise behaviour.
+    private var cachedIsMailPromise = false
     private static let promiseQueue: OperationQueue = {
         let q = OperationQueue()
         q.maxConcurrentOperationCount = 1      // serial → safe shared accumulator
@@ -85,6 +89,7 @@ final class DroppableHostingView: NSHostingView<OverlayView> {
         dragDiag("ENTERED types: "
             + (sender.draggingPasteboard.types ?? []).map(\.rawValue).joined(separator: " | "))
 #endif
+        cachedIsMailPromise = false
         let urls = extractURLs(from: sender.draggingPasteboard)
         if urls.isEmpty {
             // Non-file drag (text / link / raw image) — capture the payload now while
@@ -108,6 +113,9 @@ final class DroppableHostingView: NSHostingView<OverlayView> {
             }
             if preferPromise {
                 cachedHasPromise = true
+                cachedIsMailPromise = sender.draggingPasteboard.types?.contains(
+                    NSPasteboard.PasteboardType("com.apple.mail.PasteboardTypeMessageTransfer")
+                ) == true
                 cachedPayload = nil
             } else if let payload {
                 cachedPayload = payload
@@ -142,6 +150,7 @@ final class DroppableHostingView: NSHostingView<OverlayView> {
         cachedDropURLs = []
         cachedPayload = nil
         cachedHasPromise = false
+        cachedIsMailPromise = false
         OverlayViewModel.shared.isDragHovering = false
     }
 
@@ -159,17 +168,62 @@ final class DroppableHostingView: NSHostingView<OverlayView> {
         // File-promise drop (Safari tab, Photos, Mail): accept NOW, the source app
         // writes the real file(s) asynchronously — the session opens on delivery.
         if urls.isEmpty, cachedHasPromise {
+            let isMailPromise = cachedIsMailPromise
             cachedHasPromise = false
+            cachedIsMailPromise = false
             cachedPayload = nil
+            var mailBaseline: [String: MailFileFingerprint]?
+
+            if isMailPromise {
+                let dest = DropMaterializer.dropsDirectory()
+                // Mail still advertises the pre-NSFilePromiseReceiver contract for
+                // inbox rows. Snapshot first: invoking this method is what asks Mail
+                // to create the promised `.eml` files in our destination.
+                let baseline = Self.mailFingerprints(in: dest)
+                mailBaseline = baseline
+#if DEBUG
+                let legacyStartedAt = ProcessInfo.processInfo.systemUptime
+#endif
+                let legacyNames = sender.namesOfPromisedFilesDropped(
+                    atDestination: dest
+                ) ?? []
+#if DEBUG
+                let legacyMilliseconds = Int(
+                    (ProcessInfo.processInfo.systemUptime - legacyStartedAt) * 1_000
+                )
+                let extensions = legacyNames.map {
+                    ($0 as NSString).pathExtension.lowercased()
+                }.filter { !$0.isEmpty }
+                dragDiag(
+                    "MAIL LEGACY PROMISE names=\(legacyNames.count) "
+                    + "extensions=\(extensions.joined(separator: ",")) "
+                    + "fulfilMs=\(legacyMilliseconds)"
+                )
+#endif
+                if !legacyNames.isEmpty {
+                    receiveLegacyMailPromises(
+                        named: legacyNames,
+                        at: dest,
+                        baseline: baseline
+                    )
+                    return true
+                }
+            }
+
             if let receivers = sender.draggingPasteboard.readObjects(
                    forClasses: [NSFilePromiseReceiver.self]) as? [NSFilePromiseReceiver],
                !receivers.isEmpty {
-                receivePromises(receivers)
+                receivePromises(
+                    receivers,
+                    isMailPromise: isMailPromise,
+                    mailBaseline: mailBaseline
+                )
                 return true
             }
             return false
         }
         cachedHasPromise = false
+        cachedIsMailPromise = false
         // Non-file drop → materialize the captured text / link / image into a small
         // local file so the whole downstream file pipeline works unchanged.
         if urls.isEmpty, let payload = cachedPayload,
@@ -215,8 +269,23 @@ final class DroppableHostingView: NSHostingView<OverlayView> {
     /// Receive promised files into the Drops folder, unwrap .webloc links (Safari
     /// tabs) through the normal web path, then open/merge the session on the main
     /// actor. Failures simply produce no session — the drop can never wedge anything.
-    private func receivePromises(_ receivers: [NSFilePromiseReceiver]) {
+    private func receivePromises(
+        _ receivers: [NSFilePromiseReceiver],
+        isMailPromise: Bool,
+        mailBaseline: [String: MailFileFingerprint]? = nil
+    ) {
         let dest = DropMaterializer.dropsDirectory()
+        if isMailPromise {
+            receiveMailPromises(
+                receivers,
+                at: dest,
+                baseline: mailBaseline ?? Self.mailFingerprints(in: dest)
+            )
+            return
+        }
+
+        // Keep the proven Safari / Photos promise route unchanged. Mail is split
+        // above because one legacy receiver may invoke its reader more than once.
         var received: [URL] = []                      // mutated only on the serial queue
         let group = DispatchGroup()
         for receiver in receivers {
@@ -241,6 +310,498 @@ final class DroppableHostingView: NSHostingView<OverlayView> {
                     }
                 }
             }
+        }
+    }
+
+    /// Mail uses the legacy promise shape where one receiver can represent multiple
+    /// messages and invoke its reader once per file. Do not use the generic one-enter /
+    /// one-leave group here: batch successful callbacks briefly, then independently
+    /// recover stable expected files if Mail never supplies a usable callback.
+    private func receiveMailPromises(
+        _ receivers: [NSFilePromiseReceiver],
+        at dest: URL,
+        baseline: [String: MailFileFingerprint]
+    ) {
+        let state = MailPromiseDeliveryState()
+        let nameSource = MailPromiseNameSource.receivers(receivers)
+
+        for receiver in receivers {
+            receiver.receivePromisedFiles(atDestination: dest, options: [:],
+                                          operationQueue: Self.promiseQueue) { [weak self, state] url, error in
+#if DEBUG
+                let values = try? url.resourceValues(forKeys: [.fileSizeKey])
+                let nsError = error as NSError?
+                let errorCode = nsError.map { "\($0.domain)#\($0.code)" } ?? "nil"
+                let message = "MAIL PROMISE CALLBACK ext=\(url.pathExtension.lowercased()) "
+                    + "exists=\(FileManager.default.fileExists(atPath: url.path)) "
+                    + "bytes=\(values?.fileSize ?? -1) error=\(errorCode)"
+                DispatchQueue.main.async { dragDiag(message) }
+#endif
+                DispatchQueue.main.async { [weak self, state] in
+                    self?.collectMailPromiseCallback(
+                        successfulURL: error == nil ? url : nil,
+                        state: state
+                    )
+                }
+            }
+        }
+
+        // `fileNames` is populated by receivePromisedFiles. It is an array because a
+        // single legacy receiver can promise several messages.
+        state.expectedFileCount = Set(nameSource.currentNames.map {
+            ($0 as NSString).lastPathComponent
+        }).count
+
+        scheduleMailRecovery(
+            nameSource,
+            at: dest,
+            baseline: baseline,
+            state: state,
+            attempt: 0
+        )
+    }
+
+    /// Apple Mail inbox rows still use the legacy dragging-source promise even
+    /// though their pasteboard also looks readable as an NSFilePromiseReceiver.
+    /// `namesOfPromisedFilesDropped` has already triggered the write; from here on,
+    /// use exactly the same validation, batching, and handoff as the modern fallback.
+    private func receiveLegacyMailPromises(
+        named names: [String],
+        at dest: URL,
+        baseline: [String: MailFileFingerprint]
+    ) {
+        let state = MailPromiseDeliveryState()
+        // Mail's legacy method can return display labels with no extension even
+        // though it writes subject-named `.eml` files. The label count is useful;
+        // the literal labels are not reliable destination paths.
+        let nameSource = MailPromiseNameSource.directoryChanges(
+            expectedCount: names.count
+        )
+        state.expectedFileCount = nameSource.expectedFileCountHint
+
+        // Mail's legacy fulfilment call returns quickly, but the destination file can
+        // become visible a few runloop turns later. Take the zero-delay win when the
+        // complete delta is already present; otherwise the eager observer below keeps
+        // the same stability/MIME guards without imposing the old fixed ~1.15 s wait.
+        // A partial multi-message delta is never delivered as several sessions.
+        let immediate = Self.changedMailURLs(in: dest, since: baseline)
+        if state.expectedFileCount > 0,
+           immediate.count == state.expectedFileCount {
+#if DEBUG
+            dragDiag(
+                "MAIL PROMISE FAST PATH expected=\(state.expectedFileCount) "
+                + "candidates=\(immediate.count)"
+            )
+#endif
+            deliverMailPromiseURLs(immediate, state: state)
+        } else {
+            scheduleLegacyMailEagerRecovery(
+                at: dest,
+                baseline: baseline,
+                state: state,
+                attempt: 0
+            )
+        }
+
+        // Keep the hardened stable-fingerprint/MIME-validation recovery alive as a
+        // fallback. When the fast path delivered everything, its exact-once state
+        // makes the first recovery observation terminate without another handoff.
+        scheduleMailRecovery(
+            nameSource,
+            at: dest,
+            baseline: baseline,
+            state: state,
+            attempt: 0
+        )
+    }
+
+    /// Mail normally exposes its just-written `.eml` within a few dozen milliseconds
+    /// of the legacy fulfilment call returning. Observe that private-directory delta
+    /// at a short bounded cadence and require two identical fingerprints plus a MIME
+    /// sanity parse before handing off the complete advertised batch. The independent
+    /// slow recovery remains armed for unusually slow or partial writes.
+    private func scheduleLegacyMailEagerRecovery(
+        at dest: URL,
+        baseline: [String: MailFileFingerprint],
+        state: MailPromiseDeliveryState,
+        attempt: Int
+    ) {
+        let maxAttempts = 12                  // 40 ms, then every 50 ms through ~590 ms
+        guard attempt < maxAttempts,
+              state.expectedFileCount > 0,
+              state.deliveredPaths.count < state.expectedFileCount
+        else { return }
+
+        let delay = attempt == 0 ? 0.04 : 0.05
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self, state] in
+            guard let self,
+                  state.deliveredPaths.count < state.expectedFileCount
+            else { return }
+
+            let candidates = Self.changedMailURLs(in: dest, since: baseline)
+            var stable: [URL] = []
+            for url in candidates {
+                let path = url.standardizedFileURL.path
+                guard !state.deliveredPaths.contains(path),
+                      let current = Self.mailFingerprint(for: url),
+                      baseline[path] != current
+                else { continue }
+
+                if state.recoveryObservations[path] == current,
+                   Self.isValidMailPromiseFile(url) {
+                    stable.append(url)
+                }
+                state.recoveryObservations[path] = current
+            }
+
+#if DEBUG
+            let elapsedMilliseconds = Int(
+                (ProcessInfo.processInfo.systemUptime - state.startedAt) * 1_000
+            )
+            dragDiag(
+                "MAIL PROMISE EAGER attempt=\(attempt + 1) "
+                + "elapsedMs=\(elapsedMilliseconds) "
+                + "expected=\(state.expectedFileCount) "
+                + "candidates=\(candidates.count) stable=\(stable.count)"
+            )
+#endif
+
+            // Exact count is intentional: a multi-message drag opens atomically, and
+            // an unexpected extra delta falls through to the conservative recovery.
+            if candidates.count == state.expectedFileCount,
+               stable.count == state.expectedFileCount {
+#if DEBUG
+                dragDiag("MAIL PROMISE EAGER HANDOFF elapsedMs=\(elapsedMilliseconds)")
+#endif
+                self.deliverMailPromiseURLs(stable, state: state)
+                return
+            }
+
+            if attempt + 1 < maxAttempts {
+                self.scheduleLegacyMailEagerRecovery(
+                    at: dest,
+                    baseline: baseline,
+                    state: state,
+                    attempt: attempt + 1
+                )
+            }
+        }
+    }
+
+    private func collectMailPromiseCallback(
+        successfulURL: URL?,
+        state: MailPromiseDeliveryState
+    ) {
+        guard let successfulURL else { return }
+        collectMailPromiseURLs([successfulURL], state: state)
+    }
+
+    /// Callback and filesystem-recovery results share one accumulator. This matters
+    /// for a single Mail drag containing several messages: whichever source reports
+    /// each file, all advertised paths open as one multi-file session when possible.
+    private func collectMailPromiseURLs(
+        _ urls: [URL],
+        state: MailPromiseDeliveryState
+    ) {
+        for url in urls {
+            let path = url.standardizedFileURL.path
+            guard !state.deliveredPaths.contains(path),
+                  state.callbackPaths.insert(path).inserted
+            else { continue }
+            state.callbackURLs.append(url)
+        }
+        guard !state.callbackURLs.isEmpty else { return }
+
+        let accountedFor = state.deliveredPaths.union(state.callbackPaths).count
+        if state.expectedFileCount > 0, accountedFor >= state.expectedFileCount {
+            flushMailCallbackBatch(state: state)
+        } else if state.expectedFileCount == 0 {
+            // Some legacy promises do not publish fileNames. In that shape, use one
+            // short rolling batch window instead of flushing each late callback alone.
+            scheduleUnknownMailBatchFlush(state: state)
+        } else {
+            // An advertised sibling may still be arriving (or may never arrive).
+            // Wait long enough to coalesce normal Mail writes, but keep the wait bounded.
+            scheduleIncompleteMailBatchFlush(state: state)
+        }
+    }
+
+    private func scheduleUnknownMailBatchFlush(state: MailPromiseDeliveryState) {
+        guard !state.shortBatchFlushScheduled else { return }
+        state.shortBatchFlushScheduled = true
+        let generation = state.batchGeneration
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.80) { [weak self, state] in
+            guard state.batchGeneration == generation else { return }
+            state.shortBatchFlushScheduled = false
+            let accountedFor = state.deliveredPaths.union(state.callbackPaths).count
+            if state.expectedFileCount > 0, accountedFor < state.expectedFileCount {
+                self?.scheduleIncompleteMailBatchFlush(state: state)
+            } else {
+                self?.flushMailCallbackBatch(state: state)
+            }
+        }
+    }
+
+    private func scheduleIncompleteMailBatchFlush(state: MailPromiseDeliveryState) {
+        guard !state.hardBatchFlushScheduled else { return }
+        state.hardBatchFlushScheduled = true
+        let generation = state.batchGeneration
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2.50) { [weak self, state] in
+            guard state.batchGeneration == generation else { return }
+            state.hardBatchFlushScheduled = false
+            self?.flushMailCallbackBatch(state: state)
+        }
+    }
+
+    private func flushMailCallbackBatch(state: MailPromiseDeliveryState) {
+        // `dragCompleted()` starts the normal delayed pill dismissal. Opening a
+        // session after that collapse begins but before it finishes can leave
+        // `isCollapsing` latched on the newly opened card. Mail always hands off after
+        // the nominal collapse window: `.radialOpenSession` itself hops through a Task,
+        // so a pre-dismiss notification could otherwise still lose the main-queue race.
+        let elapsed = ProcessInfo.processInfo.systemUptime - state.startedAt
+        if elapsed < 0.55 {
+            scheduleMailSafeFlush(state: state, after: 0.55 - elapsed)
+            return
+        }
+        // Also check the live flag because a stalled main thread can run the delayed
+        // collapse later than its nominal deadline.
+        if OverlayViewModel.shared.isCollapsing {
+            scheduleMailSafeFlush(state: state, after: 0.40)
+            return
+        }
+
+        // Invalidate any still-scheduled short fallback before handing the batch off.
+        state.batchGeneration += 1
+        state.shortBatchFlushScheduled = false
+        state.hardBatchFlushScheduled = false
+        state.safeFlushScheduled = false
+        let batch = state.callbackURLs
+        state.callbackURLs.removeAll()
+        state.callbackPaths.removeAll()
+        guard !batch.isEmpty else { return }
+        deliverMailPromiseURLs(batch, state: state)
+    }
+
+    private func scheduleMailSafeFlush(
+        state: MailPromiseDeliveryState,
+        after delay: TimeInterval
+    ) {
+        guard !state.safeFlushScheduled else { return }
+        state.safeFlushScheduled = true
+        let generation = state.batchGeneration
+        DispatchQueue.main.asyncAfter(deadline: .now() + max(0, delay)) { [weak self, state] in
+            guard state.batchGeneration == generation else { return }
+            state.safeFlushScheduled = false
+            self?.flushMailCallbackBatch(state: state)
+        }
+    }
+
+    /// Poll Mail's advertised destination names (modern receiver) or the private Drops
+    /// directory delta (legacy inbox-row promise), at a bounded 0.5 s cadence. Two
+    /// identical fingerprints are required, so a file that finishes near the end of
+    /// the five-second promise horizon still gets one later observation.
+    private func scheduleMailRecovery(
+        _ nameSource: MailPromiseNameSource,
+        at dest: URL,
+        baseline: [String: MailFileFingerprint],
+        state: MailPromiseDeliveryState,
+        attempt: Int
+    ) {
+        let maxAttempts = 12                  // 0.65 s, then through ~6.15 s
+        guard attempt < maxAttempts else { return }
+        let delay = attempt == 0 ? 0.65 : 0.5
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self, state] in
+            guard let self else { return }
+            let names = nameSource.currentNames
+            var expectedByPath: [String: URL] = [:]
+            if nameSource.discoversDirectoryChanges {
+                // The Drops directory is private to Dragaway. A pre-drop fingerprint
+                // snapshot lets the legacy Mail path identify the files it actually
+                // wrote even when its returned promise labels omit `.eml` entirely.
+                for (path, fingerprint) in Self.mailFingerprints(in: dest)
+                where baseline[path] != fingerprint {
+                    expectedByPath[path] = URL(fileURLWithPath: path).standardizedFileURL
+                }
+            } else {
+                for name in names {
+                    let url = dest.appendingPathComponent((name as NSString).lastPathComponent)
+                        .standardizedFileURL
+                    expectedByPath[url.path] = url
+                }
+            }
+            state.expectedFileCount = max(
+                state.expectedFileCount,
+                max(nameSource.expectedFileCountHint, expectedByPath.count)
+            )
+
+            var stable: [URL] = []
+            for (path, url) in expectedByPath where !state.deliveredPaths.contains(path) {
+                guard let current = Self.mailFingerprint(for: url),
+                      baseline[path] != current
+                else { continue }
+                if state.recoveryObservations[path] == current,
+                   Self.isValidMailPromiseFile(url) {
+                    stable.append(url)
+                }
+                state.recoveryObservations[path] = current
+            }
+#if DEBUG
+            dragDiag(
+                "MAIL PROMISE RECOVERY attempt=\(attempt + 1) "
+                + "expected=\(state.expectedFileCount) "
+                + "candidates=\(expectedByPath.count) stable=\(stable.count)"
+            )
+#endif
+            self.collectMailPromiseURLs(stable, state: state)
+
+            let expectedPaths = Set(expectedByPath.keys)
+            let allDelivered = state.expectedFileCount > 0
+                && state.deliveredPaths.count >= state.expectedFileCount
+                && expectedPaths.isSubset(of: state.deliveredPaths)
+            if !allDelivered {
+                if attempt + 1 < maxAttempts {
+                    self.scheduleMailRecovery(
+                        nameSource,
+                        at: dest,
+                        baseline: baseline,
+                        state: state,
+                        attempt: attempt + 1
+                    )
+                } else {
+                    // Final bounded recovery pass: deliver any verified remainder,
+                    // even if one advertised message never appeared on disk.
+                    self.flushMailCallbackBatch(state: state)
+                }
+            }
+        }
+    }
+
+    /// Main-thread, exact-once handoff used only by Apple Mail promise recovery.
+    private func deliverMailPromiseURLs(_ urls: [URL], state: MailPromiseDeliveryState) {
+        let final = urls.map { DropMaterializer.normalizeReceived($0) }
+            .filter { !FileInspector.isUnsupportedFileType($0) }
+        guard !final.isEmpty else { return }
+
+        let vm = OverlayViewModel.shared
+        let occupied = Set((vm.sessionFileURLs + vm.pendingDroppedURLs).map {
+            $0.standardizedFileURL.path
+        })
+        var fresh: [URL] = []
+        for url in final {
+            let path = url.standardizedFileURL.path
+            guard !occupied.contains(path), state.deliveredPaths.insert(path).inserted else { continue }
+            fresh.append(url)
+        }
+        guard !fresh.isEmpty else { return }
+
+        if case .waitingForDrop = vm.stage {
+            NotificationCenter.default.post(name: .radialOpenSession, object: fresh)
+        } else {
+            withAnimation(.spring(response: 0.36, dampingFraction: 1.0)) {
+                vm.pendingDroppedURLs = vm.pendingDroppedURLs + fresh
+            }
+        }
+    }
+
+    /// Conservative RFC-message sanity check for the Mail-only fallback. Parsing is
+    /// bounded to 64 KiB and requires a regular non-empty `.eml` / `.emlx` file.
+    private static func isValidMailPromiseFile(_ url: URL) -> Bool {
+        guard FileInspector.isEmailFile(url),
+              let values = try? url.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey]),
+              values.isRegularFile == true,
+              (values.fileSize ?? 0) > 0
+        else { return false }
+        return (try? EmailContentExtractor.extract(from: url, byteLimit: 64 * 1024)) != nil
+    }
+
+    private static func mailFingerprints(in directory: URL) -> [String: MailFileFingerprint] {
+        let files = (try? FileManager.default.contentsOfDirectory(
+            at: directory,
+            includingPropertiesForKeys: [.isRegularFileKey, .fileSizeKey, .contentModificationDateKey]
+        )) ?? []
+        var result: [String: MailFileFingerprint] = [:]
+        for url in files where FileInspector.isEmailFile(url) {
+            if let fingerprint = mailFingerprint(for: url) {
+                result[url.standardizedFileURL.path] = fingerprint
+            }
+        }
+        return result
+    }
+
+    /// New or changed Mail message files written after a pre-fulfilment snapshot.
+    /// `mailFingerprints` already guarantees regular, non-empty `.eml` / `.emlx`
+    /// files; full bounded MIME extraction is intentionally left to the background
+    /// session preparation so the UI can react immediately.
+    private static func changedMailURLs(
+        in directory: URL,
+        since baseline: [String: MailFileFingerprint]
+    ) -> [URL] {
+        mailFingerprints(in: directory)
+            .filter { path, fingerprint in baseline[path] != fingerprint }
+            .keys
+            .sorted()
+            .map { URL(fileURLWithPath: $0).standardizedFileURL }
+    }
+
+    private static func mailFingerprint(for url: URL) -> MailFileFingerprint? {
+        guard FileInspector.isEmailFile(url),
+              let values = try? url.resourceValues(forKeys: [
+                .isRegularFileKey, .fileSizeKey, .contentModificationDateKey,
+              ]),
+              values.isRegularFile == true,
+              let size = values.fileSize,
+              size > 0,
+              let modified = values.contentModificationDate
+        else { return nil }
+        return MailFileFingerprint(size: size, modified: modified.timeIntervalSinceReferenceDate)
+    }
+
+    private struct MailFileFingerprint: Equatable {
+        let size: Int
+        let modified: TimeInterval
+    }
+
+    private final class MailPromiseDeliveryState {
+        var deliveredPaths: Set<String> = []
+        var callbackURLs: [URL] = []
+        var callbackPaths: Set<String> = []
+        var expectedFileCount = 0
+        var shortBatchFlushScheduled = false
+        var hardBatchFlushScheduled = false
+        var safeFlushScheduled = false
+        var batchGeneration = 0
+        let startedAt = ProcessInfo.processInfo.systemUptime
+        var recoveryObservations: [String: MailFileFingerprint] = [:]
+    }
+
+    private enum MailPromiseNameSource {
+        case directoryChanges(expectedCount: Int)
+        case receivers([NSFilePromiseReceiver])
+
+        var currentNames: [String] {
+            switch self {
+            case .directoryChanges:
+                return []
+            case .receivers(let receivers):
+                return receivers.flatMap(\.fileNames)
+            }
+        }
+
+        var expectedFileCountHint: Int {
+            switch self {
+            case .directoryChanges(let expectedCount):
+                return expectedCount
+            case .receivers:
+                return Set(currentNames.map {
+                    ($0 as NSString).lastPathComponent
+                }).count
+            }
+        }
+
+        var discoversDirectoryChanges: Bool {
+            if case .directoryChanges = self { return true }
+            return false
         }
     }
 

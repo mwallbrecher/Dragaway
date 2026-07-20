@@ -1256,7 +1256,7 @@ private struct TwoColumnView: View {
             }
 
             // Go deeper — Pro-only manual escalation to the most capable model. Hosted
-            // only: BYOK uses a fixed model per provider, so it can't escalate.
+            // only: BYOK honours the user's exact model, so it can't auto-escalate.
             if provider is HostedProvider, EntitlementStore.shared.isPremiumUnlocked {
                 ResultIconButton(systemName: "sparkles",
                                  tooltip: "Go deeper — re-answer with the most capable model") {
@@ -1658,106 +1658,205 @@ private struct ThinkingRow: View {
 
 // MARK: - Shared subviews
 
-/// File header: unified file-info pill on the left, collapse toggle + close on the right.
-/// The entire pill (icon + name + share) is drag-source for moving the file out.
+/// File header: contextual type + session controls above a full-width file-info pill.
+/// Share stays inside the pill; the pill remains the drag source for moving the file out.
 /// In stage 3 (result) the close button is hidden here — it lives in the icon bar
 /// above the ScrollView instead, and animates there via matchedGeometryEffect.
 private struct FileHeaderView: View {
     let fileURL: URL
     let closeNS: Namespace.ID
     @ObservedObject private var vm = OverlayViewModel.shared
+    @ObservedObject private var entitlementStore = EntitlementStore.shared
+    @ObservedObject private var modelCatalog = AIModelCatalogStore.shared
+    @AppStorage("selectedProvider") private var selectedProvider = AIProviderType.groq.rawValue
     @State private var isHoveringCollapse = false
+    @State private var configurationRevision = 0
     @Environment(\.uiScale) private var scale
 
     var body: some View {
-        HStack(spacing: 8 * scale) {
+        let ai = currentAISelectionDisplay(
+            selectedProviderRaw: selectedProvider,
+            entitlement: entitlementStore.tier
+        )
 
-            // ── File pill(s) ─────────────────────────────────────────────────
-            // One icon-only pill per file; carousel kicks in beyond two files.
+        VStack(alignment: .leading, spacing: 8 * scale) {
+            HStack(spacing: 4 * scale) {
+                Text(FilePresentation.typeLabel(for: fileURL))
+                    .font(.system(size: 11 * scale, weight: .semibold))
+                    .foregroundColor(.white.opacity(0.55))
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                    .layoutPriority(1)
+
+                Menu {
+                    if modelChoices.isEmpty {
+                        Button("No configured models") {}
+                            .disabled(true)
+                    } else {
+                        Picker("", selection: modelSelection) {
+                            ForEach(modelChoices) { choice in
+                                Text(choice.menuTitle).tag(choice.id)
+                            }
+                        }
+                        .labelsHidden()
+                        .pickerStyle(.inline)
+                    }
+
+                    Divider()
+
+                    Button("Provider Settings") {
+                        NotificationCenter.default.post(name: .showAIProvider, object: nil)
+                    }
+                } label: {
+                    HStack(spacing: 3 * scale) {
+                        Text(ai.model)
+                            .lineLimit(1)
+                            .truncationMode(.tail)
+                            .minimumScaleFactor(0.75)
+                        Image(systemName: "chevron.down")
+                            .font(.system(size: 6 * scale, weight: .bold))
+                    }
+                    .font(.system(size: 7 * scale, weight: .medium))
+                    .foregroundColor(.white.opacity(0.40))
+                }
+                .menuStyle(.borderlessButton)
+                .menuIndicator(.hidden)
+                .help("Switch AI model")
+
+                Spacer(minLength: 8 * scale)
+
+                // ── Collapse suggestions toggle (chips stage only) ───────────
+                // Hidden for media: there's no prompt field to collapse down to, so the
+                // toggle would have nothing to do.
+                if vm.stage.tag == 1, !FileInspector.isMediaFile(fileURL) {
+                    Button {
+                        // Height reflow stays monotonic (no Y-jump). The elastic
+                        // overbounce is the keyframeAnimator on the card (triggered by
+                        // isChipsExpanded) — it holds, then squashes when the bottom
+                        // edge lands and rebounds. See the .keyframeAnimator below.
+                        withAnimation(.easeInOut(duration: 0.22)) {
+                            vm.isChipsExpanded.toggle()
+                        }
+                    } label: {
+                        Image(systemName: vm.isChipsExpanded ? "chevron.up" : "chevron.down")
+                            .font(.system(size: 8 * scale, weight: .bold))
+                            .foregroundColor(.white.opacity(isHoveringCollapse ? 1.0 : 0.60))
+                            .frame(width: 22 * scale, height: 22 * scale)
+                            .background(
+                                Circle()
+                                    .fill(Color.white.opacity(isHoveringCollapse ? 0.12 : 0.06))
+                                    .overlay(Circle().strokeBorder(
+                                        Color.white.opacity(isHoveringCollapse ? 0.22 : 0.12),
+                                        lineWidth: 0.5
+                                    ))
+                            )
+                    }
+                    .buttonStyle(.plain)
+                    .onHover { isHoveringCollapse = $0 }
+                    .animation(.easeInOut(duration: 0.12), value: isHoveringCollapse)
+                    .help(vm.isChipsExpanded ? "Hide suggestions" : "Show suggestions")
+                }
+
+                // ── Forward to cached result (chips stage only) ──────────────
+                // Shown after the user navigated back with ← so they can restore
+                // the previous AI answer without re-running the request.
+                if vm.stage.tag == 1, let cached = vm.cachedResult {
+                    Button {
+                        withAnimation(.spring(response: 0.32, dampingFraction: 1.0)) {
+                            OverlayViewModel.shared.stage = cached
+                            OverlayViewModel.shared.cachedResult = nil
+                        }
+                    } label: {
+                        Image(systemName: "arrow.right")
+                            .font(.system(size: 8 * scale, weight: .bold))
+                            .foregroundColor(.white.opacity(0.70))
+                            .frame(width: 22 * scale, height: 22 * scale)
+                            .background(
+                                Circle()
+                                    .fill(Color.white.opacity(0.08))
+                                    .overlay(Circle().strokeBorder(Color.white.opacity(0.18), lineWidth: 0.5))
+                            )
+                    }
+                    .buttonStyle(.plain)
+                    .help(cached.tag == 5 ? "Back to result" : "Back to AI reply")
+                    .transition(.asymmetric(
+                        insertion: .scale(scale: 0.7).combined(with: .opacity)
+                                                   .animation(.spring(response: 0.26, dampingFraction: 0.68)),
+                        removal:   .scale(scale: 0.7).combined(with: .opacity)
+                                                   .animation(.easeIn(duration: 0.10))
+                    ))
+                }
+
+                // ── Minimize ─────────────────────────────────────────────────
+                // Parks the session and hides the overlay; the menu-bar icon restores it.
+                // Shown for chips (1) and error (4) only: result (3) has its own button in
+                // the stage-3 icon bar, and loading (2) is excluded so an in-flight request
+                // can't complete into a hidden, reset stage (the reply would be lost).
+                if vm.stage.tag == 1 || vm.stage.tag == 4 {
+                    MinimizeButton()
+                }
+
+                // ── Close ────────────────────────────────────────────────────
+                // Hidden in result stage — the button lives in the icon bar above
+                // the ScrollView there, animating to its new position via
+                // matchedGeometryEffect. In all other stages it stays here.
+                if vm.stage.tag != 3 {
+                    CloseButton()
+                        .matchedGeometryEffect(id: "closeBtn", in: closeNS)
+                }
+            }
+            // The type stays aligned with the file pill's leading edge, while the
+            // lightweight controls sit closer to the top-right card corner.
+            .padding(.trailing, -8 * scale)
+            .padding(.top, -8 * scale)
+
+            // ── Full-width file pill(s) ─────────────────────────────────────
+            // Share deliberately remains inside this row at the far right.
             FilePillsRow(primaryURL: fileURL)
-
-            Spacer(minLength: 0)
-
-            // ── Collapse suggestions toggle (chips stage only) ───────────────
-            // Hidden for media: there's no prompt field to collapse down to, so the
-            // toggle would have nothing to do.
-            if vm.stage.tag == 1, !FileInspector.isMediaFile(fileURL) {
-                Button {
-                    // Height reflow stays monotonic (no Y-jump). The elastic
-                    // overbounce is the keyframeAnimator on the card (triggered by
-                    // isChipsExpanded) — it holds, then squashes when the bottom
-                    // edge lands and rebounds. See the .keyframeAnimator below.
-                    withAnimation(.easeInOut(duration: 0.22)) {
-                        vm.isChipsExpanded.toggle()
-                    }
-                } label: {
-                    Image(systemName: vm.isChipsExpanded ? "chevron.up" : "chevron.down")
-                        .font(.system(size: 8 * scale, weight: .bold))
-                        .foregroundColor(.white.opacity(isHoveringCollapse ? 1.0 : 0.60))
-                        .frame(width: 22 * scale, height: 22 * scale)
-                        .background(
-                            Circle()
-                                .fill(Color.white.opacity(isHoveringCollapse ? 0.12 : 0.06))
-                                .overlay(Circle().strokeBorder(
-                                    Color.white.opacity(isHoveringCollapse ? 0.22 : 0.12),
-                                    lineWidth: 0.5
-                                ))
-                        )
-                }
-                .buttonStyle(.plain)
-                .onHover { isHoveringCollapse = $0 }
-                .animation(.easeInOut(duration: 0.12), value: isHoveringCollapse)
-                .help(vm.isChipsExpanded ? "Hide suggestions" : "Show suggestions")
-            }
-
-            // ── Forward to cached result (chips stage only) ──────────────────
-            // Shown after the user navigated back with ← so they can restore
-            // the previous AI answer without re-running the request.
-            if vm.stage.tag == 1, let cached = vm.cachedResult {
-                Button {
-                    withAnimation(.spring(response: 0.32, dampingFraction: 1.0)) {
-                        OverlayViewModel.shared.stage = cached
-                        OverlayViewModel.shared.cachedResult = nil
-                    }
-                } label: {
-                    Image(systemName: "arrow.right")
-                        .font(.system(size: 8 * scale, weight: .bold))
-                        .foregroundColor(.white.opacity(0.70))
-                        .frame(width: 22 * scale, height: 22 * scale)
-                        .background(
-                            Circle()
-                                .fill(Color.white.opacity(0.08))
-                                .overlay(Circle().strokeBorder(Color.white.opacity(0.18), lineWidth: 0.5))
-                        )
-                }
-                .buttonStyle(.plain)
-                .help(cached.tag == 5 ? "Back to result" : "Back to AI reply")
-                .transition(.asymmetric(
-                    insertion: .scale(scale: 0.7).combined(with: .opacity)
-                                               .animation(.spring(response: 0.26, dampingFraction: 0.68)),
-                    removal:   .scale(scale: 0.7).combined(with: .opacity)
-                                               .animation(.easeIn(duration: 0.10))
-                ))
-            }
-
-            // ── Minimize ───────────────────────────────────────────────────────
-            // Parks the session and hides the overlay; the menu-bar icon restores it.
-            // Shown for chips (1) and error (4) only: result (3) has its own button in
-            // the stage-3 icon bar, and loading (2) is excluded so an in-flight request
-            // can't complete into a hidden, reset stage (the reply would be lost).
-            if vm.stage.tag == 1 || vm.stage.tag == 4 {
-                MinimizeButton()
-            }
-
-            // ── Close ────────────────────────────────────────────────────────
-            // Hidden in result stage — the button lives in the icon bar above
-            // the ScrollView there, animating to its new position via
-            // matchedGeometryEffect. In all other stages it stays here.
-            if vm.stage.tag != 3 {
-                CloseButton()
-                    .matchedGeometryEffect(id: "closeBtn", in: closeNS)
-            }
+                .frame(maxWidth: .infinity, alignment: .leading)
         }
+        .onReceive(NotificationCenter.default.publisher(for: .aiProviderConfigurationChanged)) { _ in
+            configurationRevision &+= 1
+        }
+    }
+
+    private var modelChoices: [AIModelChoice] {
+        // The revision covers key/config changes that do not mutate the observed model
+        // catalogue itself; @AppStorage and EntitlementStore cover route changes.
+        _ = configurationRevision
+        _ = modelCatalog.modelsByProvider
+        return enabledAIModelChoices(
+            selectedProviderRaw: selectedProvider,
+            entitlement: entitlementStore.tier
+        )
+    }
+
+    private var modelSelection: Binding<String> {
+        Binding(
+            get: {
+                AIModelChoice.selectedID(
+                    selectedProviderRaw: selectedProvider,
+                    entitlement: entitlementStore.tier
+                )
+            },
+            set: { selectModel(id: $0) }
+        )
+    }
+
+    private func selectModel(id: String) {
+        if id == AIModelChoice.hostedID {
+            // Preserve a real Pro entitlement; a BYOK user choosing Hosted enters Free.
+            if entitlementStore.tier == .byok { entitlementStore.tier = .freeHosted }
+            return
+        }
+
+        guard let choice = modelChoices.first(where: { $0.id == id }),
+              let type = choice.providerType,
+              let modelID = choice.modelID
+        else { return }
+        modelCatalog.setSelectedModelID(modelID, for: type)
+        selectedProvider = type.rawValue
+        entitlementStore.tier = .byok
     }
 }
 
@@ -1817,6 +1916,8 @@ private struct FilePillsRow: View {
                             .transition(.scale(scale: 0.7).combined(with: .opacity))
                     }
 
+                    Spacer(minLength: 0)
+
                     // Share button — shares all files in the session together
                     ShareButton(fileURLs: allFiles)
                 }
@@ -1832,6 +1933,7 @@ private struct FilePillsRow: View {
                 }
             }
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
         .animation(.spring(response: 0.28, dampingFraction: 0.72), value: allFiles.count)
     }
 
@@ -1926,12 +2028,15 @@ private struct SingleFilePill: View {
             .contentShape(Rectangle())
             .onTapGesture { QuickLookController.shared.present(urls: vm.sessionFileURLs, current: 0) }
 
+            Spacer(minLength: 8 * scale)
+
             // Share the file via the native macOS share sheet. File utilities now
             // live in the chips-stage "Utilities" tab, not behind a ••• menu here.
             ShareButton(fileURL: fileURL)
         }
         .padding(.horizontal, 9 * scale)
         .padding(.vertical, 7 * scale)
+        .frame(maxWidth: .infinity, alignment: .leading)
         .background(
             RoundedRectangle(cornerRadius: 9 * scale, style: .continuous)
                 .fill(Color.white.opacity(isHovering ? 0.08 : 0.05))
@@ -2092,7 +2197,7 @@ private struct FilePill: View {
             }
             .onAppear {
                 Task { @MainActor in
-                    fileIcon = NSWorkspace.shared.icon(forFile: fileURL.path)
+                    fileIcon = FilePresentation.icon(for: fileURL)
                 }
             }
     }
@@ -2519,14 +2624,23 @@ private func sendTurn(provider: any AIProvider,
         do {
             // Extract the document ONCE per session; reuse for every turn.
             let base: OverlayViewModel.BaseContext
+            // Pro/subscribers read twice as much of a file before truncation.
+            // Resolved on the main actor here; the Worker enforces a matching
+            // server-verified ceiling so this can't be spoofed for spend.
+            let charLimit = EntitlementStore.shared.isPremiumUnlocked
+                ? FileContentExtractor.maxCharsPro : FileContentExtractor.maxChars
             if let cached = vm.baseContext {
                 base = cached
+            } else if let prepared = try await vm.preparedBaseContext(
+                for: [fileURL] + additionalURLs,
+                charLimit: charLimit
+            ) {
+                // A Mail drop started this extraction as soon as its chips appeared.
+                // If the user clicked first, awaiting the shared task queues this turn
+                // locally; the provider is not contacted until complete content exists.
+                base = prepared
+                vm.baseContext = prepared
             } else {
-                // Pro/subscribers read twice as much of a file before truncation.
-                // Resolved on the main actor here; the Worker enforces a matching
-                // server-verified ceiling so this can't be spoofed for spend.
-                let charLimit = EntitlementStore.shared.isPremiumUnlocked
-                    ? FileContentExtractor.maxCharsPro : FileContentExtractor.maxChars
                 let (content, imageURL, truncated) = try await buildMultiFileContent(
                     primary: fileURL, additional: additionalURLs, charLimit: charLimit)
                 base = .init(content: content, imageURL: imageURL, truncated: truncated)
@@ -2623,7 +2737,7 @@ private func buildChatTurns(conversation: [OverlayViewModel.ChatMessage],
 /// Returns (content, imageURL, truncated): imageURL is only set for a SINGLE-image
 /// session (no additionals) so vision models work; `truncated` is true when any
 /// file's content was cut to fit the extractor's char/page cap.
-private func buildMultiFileContent(
+func buildMultiFileContent(
     primary fileURL: URL,
     additional additionalURLs: [URL],
     charLimit: Int = FileContentExtractor.maxChars

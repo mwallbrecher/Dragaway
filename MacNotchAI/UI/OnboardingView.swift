@@ -82,7 +82,7 @@ struct OnboardingView: View {
 
             // ── Footnote ─────────────────────────────────────────────
             if version == .byok {
-                Text("* with average document sizes")
+                Text("You can change the exact model later in Provider Settings.")
                     .font(.system(size: 10))
                     .foregroundColor(.secondary.opacity(0.55))
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -211,14 +211,20 @@ struct OnboardingView: View {
     private func saveAndDismiss() {
         switch version {
         case .byok:
+            let type = selectedType
             if selectedType != .ollama {
                 KeychainManager.shared.save(key: apiKey.trimmingCharacters(in: .whitespaces),
                                             service: keychainService(for: selectedType))
             }
+            // Persist the legacy default as this provider's first explicit selection,
+            // then populate the live picker without delaying onboarding dismissal.
+            _ = AIModelCatalogStore.shared.selectedModelID(for: type)
+            Task { await AIModelCatalogStore.shared.refresh(type, force: true) }
             EntitlementStore.shared.tier = .byok
         case .free:
             EntitlementStore.shared.tier = .freeHosted
         }
+        NotificationCenter.default.post(name: .aiProviderConfigurationChanged, object: nil)
         UserDefaults.standard.set(true, forKey: "hasCompletedOnboarding")
         // Fresh install: follow up with the interactive tour (skippable; Settings → Help).
         if !UserDefaults.standard.bool(forKey: "tutorialShown") {
@@ -334,7 +340,7 @@ struct ProviderRow: View {
 
                 VStack(alignment: .leading, spacing: 4) {
 
-                    // Row 1: provider name + tier badge
+                    // Row 1: provider name + provider badge
                     HStack(spacing: 7) {
                         Text(type.displayName)
                             .font(.subheadline.weight(isSelected ? .semibold : .medium))
@@ -360,7 +366,7 @@ struct ProviderRow: View {
                         .font(.caption.weight(.medium))
                         .foregroundColor(isSelected ? .primary.opacity(0.75) : .secondary)
 
-                    // Row 3: model + pricing caption
+                    // Row 3: provider/model-selection caption
                     Text(type.pricingSubtitle)
                         .font(.caption)
                         .foregroundColor(.secondary.opacity(0.80))

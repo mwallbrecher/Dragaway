@@ -1,22 +1,33 @@
 import Foundation
 
-// Claude Haiku — cheapest option for BYOK users.
+// Anthropic — BYOK, exact model injected from AIModelCatalogStore.
 // API key from: https://console.anthropic.com
 
 final class AnthropicProvider: AIProvider {
     let name = "Anthropic"
     private let apiKey: String
     private let baseURL = "https://api.anthropic.com/v1/messages"
-    private let model = "claude-haiku-4-5-20251001"
+    private let modelID: String
+    private let supportsVision: Bool
     /// Anthropic won't cache a block below ~2048 tokens on Haiku. At ~4 chars/token
     /// that's ~8k chars; below it we skip the `cache_control` mark entirely.
     private static let cacheMinChars = 8000
 
-    init(apiKey: String) { self.apiKey = apiKey }
+    init(apiKey: String, modelID: String, supportsVision: Bool) {
+        self.apiKey = apiKey
+        self.modelID = modelID
+        self.supportsVision = supportsVision
+    }
     var isAvailable: Bool { !apiKey.isEmpty }
 
     func reply(messages turns: [ChatTurn], imageURL: URL?, plan: RoutingPlan) async throws -> String {
         guard isAvailable else { throw AIError.noAPIKey(provider: name) }
+        try requireImageSupport(
+            imageURL: imageURL,
+            supportsVision: supportsVision,
+            provider: name,
+            modelID: modelID
+        )
 
         var request = URLRequest(url: URL(string: baseURL)!)
         request.httpMethod = "POST"
@@ -32,12 +43,18 @@ final class AnthropicProvider: AIProvider {
             throw AIError.apiError(data.apiErrorMessage() ?? "HTTP \(http.statusCode)")
         }
         let decoded = try JSONDecoder().decode(AnthropicResponse.self, from: data)
-        return decoded.content.first?.text ?? "No response"
+        return decoded.content.compactMap(\.text).first ?? "No response"
     }
 
     func replyStream(messages turns: [ChatTurn], imageURL: URL?, plan: RoutingPlan,
                      onDelta: @escaping (String) -> Void) async throws -> String {
         guard isAvailable else { throw AIError.noAPIKey(provider: name) }
+        try requireImageSupport(
+            imageURL: imageURL,
+            supportsVision: supportsVision,
+            provider: name,
+            modelID: modelID
+        )
 
         var request = URLRequest(url: URL(string: baseURL)!)
         request.httpMethod = "POST"
@@ -95,7 +112,7 @@ final class AnthropicProvider: AIProvider {
         var imageUsed = false
         let messages: [[String: Any]] = turns.compactMap { turn in
             guard turn.role == "user" || turn.role == "assistant" else { return nil }
-            if turn.role == "user", !imageUsed,
+            if supportsVision, turn.role == "user", !imageUsed,
                let imageURL, FileInspector.isImageFile(imageURL),
                let imageData = try? Data(contentsOf: imageURL) {
                 imageUsed = true
@@ -129,7 +146,7 @@ final class AnthropicProvider: AIProvider {
         }
 
         return [
-            "model": model,
+            "model": modelID,
             "system": systemPrompt,
             "messages": messages,
             "max_tokens": plan.maxOutputTokens
@@ -150,6 +167,6 @@ final class AnthropicProvider: AIProvider {
 struct AnthropicResponse: Decodable {
     let content: [ContentBlock]
     struct ContentBlock: Decodable {
-        let text: String
+        let text: String?
     }
 }

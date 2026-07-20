@@ -1,11 +1,14 @@
+import AppKit
+import Combine
 import SwiftUI
 import UniformTypeIdentifiers
 
 /// Which slice of the settings to show. The menu-bar dropdown opens the window
 /// scoped to a single setting (`.windowSize` / `.customPrompt` / `.favoriteTools` /
-/// `.aiProvider`); the system ⌘, Settings scene still shows everything (`.all`).
+/// `.aiProvider` / `.enhancedAccess`); the system ⌘, Settings scene still shows
+/// everything (`.all`).
 enum SettingsSection: String {
-    case all, windowSize, customPrompt, favoriteTools, outputDirectory, scripts, aiProvider, clipboard, help
+    case all, windowSize, customPrompt, favoriteTools, outputDirectory, scripts, aiProvider, clipboard, enhancedAccess, help
 
     /// Title for the settings window when opened scoped to this section.
     var windowTitle: String {
@@ -18,6 +21,7 @@ enum SettingsSection: String {
         case .scripts:         return "Scripts"
         case .aiProvider:      return "AI Provider"
         case .clipboard:       return "Clipboard & Capture"
+        case .enhancedAccess:  return "Enhanced Access"
         case .help:            return "Help"
         }
     }
@@ -32,6 +36,7 @@ struct SettingsView: View {
     @AppStorage("uiScale")          private var uiScaleRaw       = UIScale.small.rawValue
     @AppStorage("screenshotsToSession")         private var screenshotsToSession  = false
     @AppStorage("clipboardSessionHotkeyEnabled") private var clipboardHotkeyEnabled = true
+    @AppStorage(EnhancedAccess.enabledKey)       private var enhancedAccessEnabled = false
     /// Sub-mode of screenshots→session: "instant" (thumbnail off, immediate) or
     /// "thumbnail" (preview kept, session opens after the ~5 s save delay).
     @AppStorage("screenshotCaptureMode")        private var screenshotMode = "instant"
@@ -59,10 +64,13 @@ struct SettingsView: View {
     @ObservedObject private var toolsStore  = FavoriteToolsStore.shared
     @ObservedObject private var outputStore = OutputDirectoryStore.shared
     @ObservedObject private var scriptsStore = ScriptsStore.shared
+    @ObservedObject private var modelCatalog = AIModelCatalogStore.shared
+    @ObservedObject private var entitlementStore = EntitlementStore.shared
     @State private var apiKey = ""
     @State private var ollamaAvailable = false
     @State private var saved = false
     @State private var newCustomPrompt = ""
+    @State private var enhancedAccessAuthorized = false
     /// Which favorite-tools tab is showing. `.general` = the shared list; a category
     /// case = that file type's own list (with its Use-General toggle).
     @State private var favTab: FavTab = .general
@@ -81,6 +89,19 @@ struct SettingsView: View {
 
     /// Whether a given section should render under the current scope.
     private func shows(_ s: SettingsSection) -> Bool { section == .all || section == s }
+
+    private var enhancedAccessStatus: (text: String, color: Color) {
+        switch (enhancedAccessEnabled, enhancedAccessAuthorized) {
+        case (true, true):   return ("Enhanced Access is ready", .green)
+        case (true, false):  return ("Accessibility permission required", .orange)
+        case (false, true):  return ("Permission granted · feature disabled", .secondary)
+        case (false, false): return ("Not enabled", .secondary)
+        }
+    }
+
+    private func refreshEnhancedAccessStatus() {
+        enhancedAccessAuthorized = EnhancedAccess.isAuthorized
+    }
 
     var body: some View {
         Form {
@@ -169,6 +190,77 @@ struct SettingsView: View {
                 }
                 .onChange(of: clipboardHotkeyEnabled) { _, _ in
                     NotificationCenter.default.post(name: .captureSettingsChanged, object: nil)
+                }
+            }
+            }
+
+            if shows(.enhancedAccess) {
+            Section("Enhanced Access") {
+                VStack(alignment: .leading, spacing: 14) {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Toggle("Make Dragaway more powerful with Accessibility",
+                               isOn: $enhancedAccessEnabled)
+                        Text("Optional and off by default. Dragaway only uses this permission to send a paste shortcut after you choose an item from Clipboard History.")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+
+                    HStack(spacing: 7) {
+                        Circle()
+                            .fill(enhancedAccessStatus.color)
+                            .frame(width: 7, height: 7)
+                        Text(enhancedAccessStatus.text)
+                            .font(.caption.weight(.medium))
+                            .foregroundColor(enhancedAccessStatus.color)
+                        Spacer()
+                        if enhancedAccessEnabled || enhancedAccessAuthorized {
+                            Button(enhancedAccessAuthorized
+                                   ? "Manage in System Settings"
+                                   : "Open System Settings") {
+                                EnhancedAccess.openSystemSettings()
+                            }
+                            .controlSize(.small)
+                        }
+                    }
+
+                    Divider()
+
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Enabled capabilities")
+                            .font(.caption.weight(.semibold))
+                        Label {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("Instant Clipboard History paste")
+                                    .font(.caption.weight(.medium))
+                                Text("After selecting text, an image, or files, focus returns to the app you were using and Dragaway pastes once.")
+                                    .font(.caption2)
+                                    .foregroundColor(.secondary)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
+                        } icon: {
+                            Image(systemName: "doc.on.clipboard")
+                        }
+                    }
+
+                    Text("Turning this switch off stops Dragaway from using the permission. To remove the macOS permission itself, use System Settings → Privacy & Security → Accessibility.")
+                        .font(.caption2)
+                        .foregroundColor(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .padding(.vertical, 4)
+                .onAppear { refreshEnhancedAccessStatus() }
+                .onReceive(NotificationCenter.default.publisher(
+                    for: NSApplication.didBecomeActiveNotification
+                )) { _ in
+                    refreshEnhancedAccessStatus()
+                }
+                .onChange(of: enhancedAccessEnabled) { oldValue, newValue in
+                    if newValue && !oldValue {
+                        enhancedAccessAuthorized = EnhancedAccess.requestAuthorization()
+                    } else {
+                        refreshEnhancedAccessStatus()
+                    }
                 }
             }
             }
@@ -288,7 +380,7 @@ struct SettingsView: View {
 
             if shows(.aiProvider) {
             Section(header: Text("AI Provider"),
-                    footer: Text("* with average document sizes")
+                    footer: Text("Choose a provider here, then select its exact model below.")
                         .font(.caption2)
                         .foregroundColor(.secondary)) {
                 VStack(spacing: 6) {
@@ -298,8 +390,9 @@ struct SettingsView: View {
                             isSelected: selectedProvider == type.rawValue
                         ) {
                             selectedProvider = type.rawValue
+                            entitlementStore.tier = .byok
                             apiKey = KeychainManager.shared.load(
-                                service: keychainService(for: selectedType)
+                                service: type.keychainService
                             ) ?? ""
                             saved = false
                         }
@@ -314,13 +407,20 @@ struct SettingsView: View {
 
                     HStack {
                         Button("Save Key") {
+                            let type = selectedType
                             KeychainManager.shared.save(
-                                key: apiKey.trimmingCharacters(in: .whitespaces),
-                                service: keychainService(for: selectedType)
+                                key: apiKey.trimmingCharacters(in: .whitespacesAndNewlines),
+                                service: type.keychainService
+                            )
+                            entitlementStore.tier = .byok
+                            NotificationCenter.default.post(
+                                name: .aiProviderConfigurationChanged,
+                                object: type
                             )
                             saved = true
+                            Task { await modelCatalog.refresh(type, force: true) }
                         }
-                        .disabled(apiKey.trimmingCharacters(in: .whitespaces).isEmpty)
+                        .disabled(apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
 
                         if saved {
                             Label("Saved", systemImage: "checkmark.circle.fill")
@@ -364,7 +464,83 @@ struct SettingsView: View {
                         .foregroundColor(.secondary)
                         .textSelection(.enabled)
                 }
-                .task { ollamaAvailable = await isOllamaRunning() }
+            }
+
+            Section(
+                header: Text("Model"),
+                footer: Text("Dragaway sends the exact selected model ID. It never silently substitutes another model. “Other available models” come from the provider's live list but may not support every Dragaway request.")
+                    .font(.caption2)
+                    .foregroundColor(.secondary)
+            ) {
+                Picker("Selected model", selection: selectedModelBinding) {
+                    modelPickerOptions
+                }
+
+                Text(modelCatalog.selectedModelID(for: selectedType))
+                    .font(.system(size: 10, design: .monospaced))
+                    .foregroundColor(.secondary)
+                    .textSelection(.enabled)
+
+                if modelCatalog.selectedModelIsUnavailable(for: selectedType) {
+                    Label(
+                        "This model was not returned by the latest refresh. Choose another before sending a request.",
+                        systemImage: "exclamationmark.triangle.fill"
+                    )
+                    .font(.caption)
+                    .foregroundColor(.orange)
+                } else if modelCatalog.selectedDescriptor(for: selectedType).isLegacy {
+                    Label(
+                        "This model is marked legacy. It still remains selected until you explicitly choose another.",
+                        systemImage: "exclamationmark.triangle"
+                    )
+                    .font(.caption)
+                    .foregroundColor(.orange)
+                }
+
+                if modelCatalog.selectedDescriptor(for: selectedType).supportsVision == false {
+                    Label(
+                        "Text-only model. Image drops require a model marked Vision.",
+                        systemImage: "photo.badge.exclamationmark"
+                    )
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                }
+
+                HStack(spacing: 8) {
+                    Button("Refresh Models") {
+                        Task { await refreshSelectedModelCatalogue(force: true) }
+                    }
+                    .disabled(
+                        !canRefreshSelectedModels
+                            || modelCatalog.loadingProviders.contains(selectedType)
+                    )
+
+                    if modelCatalog.loadingProviders.contains(selectedType) {
+                        ProgressView()
+                            .controlSize(.small)
+                    }
+
+                    Spacer()
+
+                    if let date = modelCatalog.lastRefreshedByProvider[selectedType] {
+                        Text("Updated \(date.formatted(date: .abbreviated, time: .shortened))")
+                            .font(.caption2)
+                            .foregroundColor(.secondary)
+                    }
+                }
+
+                if let error = modelCatalog.errorsByProvider[selectedType] {
+                    Text(error)
+                        .font(.caption)
+                        .foregroundColor(.orange)
+                        .textSelection(.enabled)
+                } else if modelCatalog.availableModels(for: selectedType).isEmpty {
+                    Text(canRefreshSelectedModels
+                         ? "Refresh to load the models available to this account."
+                         : "Save the API key first, then refresh the model list.")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
             }
             }
         }
@@ -372,7 +548,87 @@ struct SettingsView: View {
         .frame(width: 420)
         .padding()
         .onAppear {
-            apiKey = KeychainManager.shared.load(service: keychainService(for: selectedType)) ?? ""
+            apiKey = KeychainManager.shared.load(service: selectedType.keychainService) ?? ""
+        }
+        .task(id: selectedProvider) {
+            guard shows(.aiProvider) else { return }
+            apiKey = KeychainManager.shared.load(service: selectedType.keychainService) ?? ""
+            saved = false
+            if selectedType == .ollama {
+                ollamaAvailable = await isOllamaRunning()
+            }
+            await refreshSelectedModelCatalogue(force: false)
+        }
+    }
+
+    private var selectedModelBinding: Binding<String> {
+        Binding(
+            get: { modelCatalog.selectedModelID(for: selectedType) },
+            set: { modelID in
+                modelCatalog.setSelectedModelID(modelID, for: selectedType)
+                entitlementStore.tier = .byok
+            }
+        )
+    }
+
+    @ViewBuilder
+    private var modelPickerOptions: some View {
+        let selected = modelCatalog.selectedDescriptor(for: selectedType)
+        let known = modelCatalog.knownModels(for: selectedType)
+        let other = modelCatalog.otherModels(for: selectedType)
+        let hasLiveSelection = (known + other).contains { $0.modelID == selected.modelID }
+
+        if !hasLiveSelection {
+            Text(
+                modelPickerLabel(selected)
+                    + (modelCatalog.selectedModelIsUnavailable(for: selectedType)
+                       ? " — Unavailable"
+                       : " — Current")
+            )
+            .tag(selected.modelID)
+        }
+
+        if !known.isEmpty {
+            Section("Known compatible models") {
+                ForEach(known) { model in
+                    Text(modelPickerLabel(model))
+                        .tag(model.modelID)
+                        .help(model.modelID)
+                }
+            }
+        }
+
+        if !other.isEmpty {
+            Section("Other available models") {
+                ForEach(other) { model in
+                    Text(modelPickerLabel(model))
+                        .tag(model.modelID)
+                        .help(model.modelID)
+                }
+            }
+        }
+    }
+
+    private func modelPickerLabel(_ model: AIModelDescriptor) -> String {
+        switch model.supportsVision {
+        case true:  return model.displayLabel + " · Vision"
+        case false: return model.displayLabel + " · Text only"
+        case nil:   return model.displayLabel
+        }
+    }
+
+    private var canRefreshSelectedModels: Bool {
+        if selectedType == .ollama { return true }
+        let key = KeychainManager.shared.load(service: selectedType.keychainService)?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return !key.isEmpty
+    }
+
+    private func refreshSelectedModelCatalogue(force: Bool) async {
+        guard canRefreshSelectedModels else { return }
+        await modelCatalog.refresh(selectedType, force: force)
+        if selectedType == .ollama {
+            ollamaAvailable = await isOllamaRunning()
         }
     }
 
@@ -585,16 +841,6 @@ struct SettingsView: View {
         panel.directoryURL = URL(fileURLWithPath: "/Applications")
         if panel.runModal() == .OK, let url = panel.url {
             toolsStore.add(appURL: url, to: category)
-        }
-    }
-
-    private func keychainService(for type: AIProviderType) -> String {
-        switch type {
-        case .groq:      return "com.aidrop.groq"
-        case .gemini:    return "com.aidrop.gemini"
-        case .anthropic: return "com.aidrop.anthropic"
-        case .openai:    return "com.aidrop.openai"
-        case .ollama:    return "com.aidrop.ollama"
         }
     }
 

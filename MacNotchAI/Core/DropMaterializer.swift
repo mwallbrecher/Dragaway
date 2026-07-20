@@ -118,6 +118,7 @@ enum DropMaterializer {
                 let name = (link.host ?? "Link").replacingOccurrences(of: "www.", with: "")
                 let url = dir.appendingPathComponent("\(sanitize(name)) \(stamp).txt")
                 try link.absoluteString.data(using: .utf8)?.write(to: url)
+                FilePresentation.markAsWebDrop(url)
                 prune(dir)
                 // The drop stays instant; the page content arrives in the background
                 // so "summarise this website" works on the next AI turn.
@@ -153,6 +154,9 @@ enum DropMaterializer {
             await MainActor.run {
                 guard (try? content.write(to: file, atomically: true, encoding: .utf8)) != nil
                 else { return }
+                // Atomic replacement may create a fresh inode and discard xattrs.
+                // Reattach the presentation-only origin marker after every rewrite.
+                FilePresentation.markAsWebDrop(file)
                 // If this file is the live session, drop the cached extraction so the
                 // next turn re-reads the enriched content.
                 let vm = OverlayViewModel.shared

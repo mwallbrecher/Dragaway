@@ -181,6 +181,109 @@
 - **Rule:** for mixed browser pasteboards, materialize the thing visibly dragged. Bitmap/image-promise
   representations outrank source URLs; tabs and links still resolve to URLs when no image is declared.
 
+### [DRAG-07] A written promised file does not prove a successful receiver callback
+- **What was wrong:** Apple Mail reached `draggingEntered` and wrote complete `.eml` files into the
+  promise destination, but no session opened. The first diagnosis blamed the unsupported-file filter.
+- **Why:** `.eml` already passed that filter through the generic non-empty action pool. The real handoff
+  collected a promised URL only when the `NSFilePromiseReceiver` reader returned with `error == nil`;
+  Mail's legacy promise can leave the file behind without producing that usable completion, so the
+  dispatch group path ends empty or never completes.
+- **Fix:** preserve the normal promise route and add recovery only when the drag declares Mail's exact
+  message-transfer pasteboard type. Handle Mail callbacks without the generic one-enter/one-leave group
+  because one legacy receiver may emit several files. Feed both successful callbacks and recovered files
+  through one batch accumulator so a multi-message drag stays one session. For recovery, inspect only
+  `receiver.fileNames`, require a new-or-changed size/mtime fingerprint to remain stable across
+  observations, validate a regular non-empty `.eml` / `.emlx` with a bounded MIME parse, and dedupe
+  delivery against both the current session and the normal callback.
+- **Rule:** diagnose promised-file drops as three separate gates: destination entry, physical file
+  fulfilment, and reader-callback/session handoff. Never infer the third from the first two, and keep any
+  legacy-source recovery narrowly type-gated so proven Safari/image promise behavior cannot change.
+
+### [MAIL-01] AppKit's HTML-to-text importer can load email tracking resources
+- **What was wrong:** HTML-only mail was converted with `NSAttributedString(data:options:)` and the HTML
+  document type, which looked like a local text conversion.
+- **Why:** AppKit's HTML importer resolves external stylesheets and images. A crafted or ordinary HTML
+  email can therefore issue GET requests for tracking pixels/CSS while Dragaway extracts it, leaking the
+  read event and contradicting the local-extraction privacy boundary.
+- **Fix:** keep MIME/charset decoding in Foundation, remove script/style/head/resource markup with a
+  bounded string pass, preserve basic block/list/table separators, strip all remaining tags, and decode
+  common named/numeric entities. A localhost trap confirmed embedded CSS/image URLs receive zero requests.
+- **Rule:** never feed untrusted email HTML to AppKit/WebKit merely to obtain plain text. Email extraction
+  must use a no-I/O sanitizer/parser, and remote resources must remain inert data.
+
+### [DRAG-08] Asynchronous promise delivery must not open a session mid-collapse
+- **What was wrong:** a complete promised-file batch could arrive after the delayed pill dismissal had
+  set `isCollapsing`, but before teardown reset the waiting stage. Opening chips in that interval could
+  cancel teardown while leaving the new card visually collapsed.
+- **Why:** callback time is independent of the drag-end animation. A nominal elapsed-time guard is not
+  sufficient either: if the main thread stalls, the delayed collapse itself can begin later than planned.
+- **Fix:** centralise Mail batch delivery after the nominal dismiss/collapse window and also gate it on
+  the live `isCollapsing` flag. Retain the complete accumulator and retry after the collapse when either
+  guard says the handoff is unsafe; protect retries with the batch generation token.
+- **Rule:** any asynchronous drop source that opens a session must respect the overlay's live collapse
+  state. Never write a new stage into an in-flight dismiss animation.
+
+### [DRAG-09] Apple Mail inbox rows require the advertised legacy file-promise trigger
+- **What was wrong:** Mail reached `draggingEntered` and `performDragOperation`, but no `.eml` appeared;
+  the recovery loop had nothing to validate and `NSFilePromiseReceiver` eventually timed out with
+  `NSURLErrorDomain -1001`.
+- **Why:** inbox-row drags advertise modern promise flavours *and* legacy `Apple files promise pasteboard
+  type`, but Mail's modern receiver bridge does not necessarily trigger file creation. The destination
+  must call `NSDraggingInfo.namesOfPromisedFilesDropped(atDestination:)` while the drag source is live.
+- **Fix:** for the exact Mail message-transfer flavour only, fingerprint the destination, invoke the
+  legacy fulfilment method inside `performDragOperation`, then feed its returned filenames into the same
+  stable-file/MIME/batch/collapse-safe recovery used by the modern fallback. Use the modern receiver only
+  when the legacy call returns no names.
+- **Rule:** declared pasteboard compatibility does not prove a modern promise API will fulfil a legacy
+  source. When the source advertises `NSFilesPromisePboardType`, trigger that contract during the live
+  drop, and isolate the compatibility path by exact source flavour.
+
+### [DRAG-10] A legacy promise's returned label may not be the written filename
+- **What was wrong:** the Mail legacy call returned one promised name, but recovery still found no file.
+  Filesystem evidence showed complete `.eml` files written at every drop timestamp.
+- **Why:** Mail returned an extensionless display label while writing a subject-named `.eml`. Treating
+  the label as a literal destination filename constructed a nonexistent extensionless path; the strict
+  `.eml/.emlx` validator then correctly rejected it forever.
+- **Fix:** retain the returned array only as the expected message count. For this exact legacy-Mail path,
+  diff the app-private Drops directory against its pre-fulfilment size/mtime snapshot, then apply the
+  existing two-observation stability check, MIME validation, batching, dedupe, and collapse-safe handoff
+  to the real changed `.eml/.emlx` URLs. Modern receiver names remain literal.
+- **Rule:** verify promise APIs against the destination filesystem. Never assume a legacy source's
+  returned display name is byte-for-byte identical to the file it creates.
+
+### [DRAG-11] Do not impose recovery latency on a fulfilled synchronous promise
+- **What was wrong:** working Mail drops still took roughly 1–2 seconds to show their actions because
+  every legacy fulfilment went through the fallback's two stable-fingerprint observations (0.65 s then
+  0.50 s), even when the fulfilment method had already returned with every expected `.eml` on disk.
+- **Why:** stability polling is necessary when callbacks fail or files arrive asynchronously, but it
+  was being treated as the normal path. MIME extraction was not the visible bottleneck.
+- **Fix:** after the exact Mail-only legacy call returns, compare the private Drops directory with the
+  pre-call snapshot. When the delta contains exactly the promised count of regular, non-empty mail
+  files, open the chips immediately and prepare their bounded MIME context in one shared background
+  Task; a fast action click awaits that Task before contacting a provider. Keep the original stable,
+  MIME-validated recovery for incomplete deltas. Central session opening must cancel pending teardown
+  and clear a live `isCollapsing` flag so the early handoff cannot inherit an invisible card state.
+- **Rule:** separate a promised-file happy path from its recovery path. If a synchronous source contract
+  has already produced the exact expected private-directory delta, render from the known URLs now,
+  prepare expensive content once in the background, and retain conservative polling only as fallback.
+
+### [DRAG-12] A fast synchronous promise call can still publish its file just after returning
+- **What was wrong:** the Mail fast path still took almost exactly 1.15 seconds even though the legacy
+  fulfilment method returned in 6 ms. The immediate directory scan saw no delta, so recovery deliberately
+  waited 0.65 seconds for its first fingerprint and another 0.50 seconds for stability.
+- **Why:** synchronous API return only proved that Mail accepted/completed its legacy fulfilment call;
+  it did not guarantee that the destination-directory view had exposed the new `.eml` on that exact
+  runloop turn. The file was already present by the first delayed observation, making the coarse polling
+  cadence—not file writing or MIME extraction—the measured bottleneck.
+- **Fix:** after an empty immediate scan, the exact legacy-Mail branch now observes the private directory
+  after 40 ms and then every 50 ms for a bounded ~590 ms. It still requires the full advertised count,
+  two identical size/mtime fingerprints, a bounded MIME sanity parse, and exact-once delivery. A validated
+  batch uses the collapse-cancelling early session handoff directly; the original six-second recovery
+  remains independently armed for slow or partial writes.
+- **Rule:** measure promise fulfilment, file visibility, stability, and UI handoff separately. Preserve
+  safety invariants, but tune observation cadence to the source's measured publication window instead of
+  turning a fallback interval into unavoidable product latency.
+
 ---
 
 ## Xcode / Build
@@ -443,6 +546,25 @@
   "observe our own app's keys, optionally swallow, no system scope" → `addLocalMonitorForEvents`.
   "observe other apps' keys, cannot swallow, needs Accessibility" → `addGlobalMonitorForEvents`.
 
+### [CLIP-03] Restore focus permission-free; gate cross-app paste on intent + live TCC state
+- **What was wrong:** Clipboard History selection copied the entry and closed its panel, but Dragaway
+  had activated itself to receive number keys and never returned activation. The user therefore had
+  to click the original app before pressing ⌘V. Simply posting ⌘V would hide that focus bug behind a
+  mandatory Accessibility permission.
+- **Why:** pasteboard ownership and application activation are separate. `NSPasteboard` can provide
+  data but cannot command another process to consume it. `NSRunningApplication` activation is ungated;
+  synthesizing the Command-V keyboard events is TCC-gated. Activation is also asynchronous, so a fixed
+  delay can paste into Dragaway or into a third app selected during the handoff.
+- **Fix:** capture `NSWorkspace.frontmostApplication` before showing the picker; after selection use
+  macOS 14 cooperative activation (`NSApp.yieldActivation` + `activate(from:options:)`). Default-off
+  `EnhancedAccess` stores user intent separately from `CGPreflightPostEventAccess()` and requests via
+  `CGRequestPostEventAccess()` only on OFF→ON. When both gates pass, a one-shot token waits for the
+  exact target's activation notification, re-checks the frontmost PID and TCC, then posts one ⌘V.
+  Timeout, a third-app activation, revocation, failed payload write, or failed activation cancels it.
+- **Rule:** never conflate focus restoration with auto-paste. Always restore focus without permission;
+  synthesize input only after explicit opt-in + live authorization + exact-target confirmation, and
+  clear one-shot state before posting so competing callbacks cannot double-fire.
+
 ### [SUGG-01] Adding an `AIAction` case ripples into several exhaustive switches
 - **Context:** the heuristic smart-suggestions work added `AIAction.translateEnglish`. The build broke
   at `ModelRouting.swift:63` ("switch must be exhaustive") — `AIAction.routing` switches on every case
@@ -685,6 +807,94 @@
   the pill fade completes and before rebuilding the next replay state.
 - **Rule:** when a loop changes demo content between cycles, perform the content swap after the outgoing
   surface is hidden, not at the same moment the transition begins.
+
+### [WEB-17] Keep marketing-page scroll progress spatially deterministic
+- **What was wrong:** the product-page Stage replaced its linear scroll scrub with duration-weighted
+  dwell and then a gate that combined trackpad distance with elapsed video playback.
+- **Why:** media scheduling, looping playback, scroll inertia, and discrete chapter transitions made the
+  same gesture feel inconsistent; users could meet the text before the video, get held between states,
+  or advance at an unexpected point in an ongoing gesture.
+- **Fix:** restore one pinned ScrollTrigger that scrubs the master timeline directly, while keeping the
+  seven recording switch points and settled progress-dot destinations independent of video duration.
+- **Rule:** for a marketing-page narrative, keep chapter position a deterministic function of scroll
+  position. Validate any time-based resistance as an isolated prototype before replacing the baseline.
+
+---
+
+## UI ownership
+
+### [UI-01] Keep object-scoped actions attached to the object's surface
+- **What was wrong:** the first two-row header plan moved Share into the global header-control cluster
+  together with collapse, navigation, minimize, and close.
+- **Why:** Share acts on the file/session represented by the file pill, while the other controls act on
+  the overlay itself. Moving it away weakens that ownership cue and changes a proven interaction even
+  though the request only called for reorganising the surrounding layout.
+- **Fix:** keep Share at the far right inside the full-width file-pill row and move only overlay/session
+  controls into the compact top row.
+- **Rule:** when rearranging a header, classify controls by ownership first. Object actions stay on the
+  object surface unless the user explicitly asks to change that interaction.
+
+### [UI-02] Shared rows can need asymmetric edge alignment
+- **What was wrong:** a symmetric negative horizontal inset pulled both the trailing controls and the
+  leading type label toward the card corners, although the label was meant to align with the file pill.
+- **Why:** the two ends of the row have different visual anchors: the label belongs to the content
+  column, while the window controls belong near the card edge.
+- **Fix:** retain the normal leading inset and pull only the trailing edge outward; keep both distances
+  scaled through `uiScale` and let the flexible spacer absorb width changes.
+- **Rule:** do not assume both sides of a responsive row share an alignment target. Apply directional
+  insets to the side that actually needs them instead of offsetting the entire row.
+
+---
+
+## AI model selection
+
+### [MODEL-01] A live `/models` endpoint is availability data, not a compatibility contract
+- **What was wrong:** treating every ID returned by a provider as a usable Dragaway chat model would
+  expose embeddings, speech, image-generation, moderation, guard, and endpoint-specific models in the
+  same picker as normal text/vision models.
+- **Why:** OpenAI-compatible catalogues often mix several product APIs, and most do not report the
+  request parameters or modalities supported by each ID.
+- **Fix:** fetch the live account catalogue, exclude obvious non-chat families, annotate capabilities
+  where the provider reports them, and place unrecognised but plausible chat IDs under an explicit
+  "Other available models" group.
+- **Rule:** use live catalogues to avoid stale IDs, but keep a small compatibility layer between raw
+  provider data and a production model picker.
+
+### [MODEL-02] Persist exact selections under stable provider keys
+- **What was wrong:** provider `rawValue`s contain old marketing/model copy and the providers themselves
+  hard-coded model IDs, so a UI-only picker would either become stale or silently disagree with the
+  actual request route.
+- **Why:** display labels are not durable identifiers, and replacing a disappeared model automatically
+  breaks user trust and makes cost/quality unpredictable.
+- **Fix:** give every provider a stable storage key, migrate each legacy hard-coded model once into its
+  own persisted selection, inject that exact ID into every request, and keep missing selections visible
+  as unavailable instead of substituting a default.
+- **Rule:** provider/model selection is configuration, not routing advice. Persist exact IDs per provider
+  and require an explicit user action to change them.
+
+### [MODEL-03] Discover models from the same API surface used to execute them
+
+- **What was wrong:** Gemini's first live picker used the native `generateContent` model catalogue
+  while requests were sent through Google's OpenAI-compatible Chat Completions endpoint.
+- **Why:** a provider can expose different model sets and capabilities on native, compatibility, and
+  specialised APIs. "Available somewhere on this account" does not prove compatibility with the
+  endpoint Dragaway actually calls.
+- **Fix:** query Gemini's documented OpenAI-compatible `/models` endpoint, invalidate the old cache,
+  and keep every provider catalogue aligned with its request surface.
+- **Rule:** availability checks and execution must share an API family. If the request endpoint changes,
+  version or invalidate its cached catalogue as part of the same change.
+
+### [MODEL-04] Capability overrides must target documented model profiles
+
+- **What was wrong:** broad family checks treated every Groq `qwen3` ID as supporting the same
+  `reasoning_effort` values and missed newer vision-capable variants; unknown OpenAI aliases could
+  likewise inherit the wrong image or sampling assumptions.
+- **Why:** naming families are not capability schemas. Providers reuse family strings across text,
+  vision, reasoning, preview, and endpoint-specific variants with different accepted parameters.
+- **Fix:** keep live discovery broad, but apply request parameters and vision overrides only to
+  documented exact variants or narrowly stable patterns; unknown models retain provider defaults.
+- **Rule:** never infer a wire parameter from a loose substring when a provider documents support per
+  model. A false negative may disable a feature; a false positive can make every request fail.
 
 ---
 

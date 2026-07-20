@@ -70,6 +70,19 @@ enum FileSignals {
                   let page = doc.page(at: 0) else { return nil }
             return page.string
         }
+        if FileInspector.isEmailFile(url) {
+            // MIME is a container, not line-oriented text. Decode a bounded message
+            // preview so language/date heuristics see headers + body rather than
+            // raw boundaries, transfer encoding, or attachment bytes.
+            guard let email = try? EmailContentExtractor.extract(
+                from: url,
+                byteLimit: maxPeekBytes
+            ) else { return nil }
+            let body = email.bodyIsHTML
+                ? EmailContentExtractor.plainText(fromHTML: email.body)
+                : email.body
+            return email.formattedText(body: body)
+        }
         if FileInspector.isTextFile(url) || ["txt", "md", "rtf", "csv", "tsv"].contains(ext) {
             return readPrefix(url)
         }

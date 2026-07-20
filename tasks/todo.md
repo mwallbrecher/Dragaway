@@ -1928,3 +1928,329 @@ keep the proven URL fallback unchanged.
       Finder file → normal AppKit drop, cancel/outside release, and repeated mixed drags, including
       the resulting outputs and diagnostic routing.
 - [x] **Capture lesson** — document the mixed-pasteboard priority rule after the correction is verified.
+
+## Optional Accessibility access + Clipboard History paste-on-pick (IMPLEMENTED 2026-07-13; manual smoke pending)
+
+**Goal:** keep Dragaway fully useful without permissions while offering an explicit, default-off
+Accessibility upgrade. Without the opt-in, choosing a Clipboard History item copies it and returns
+focus to the previously active app so the user only needs to press ⌘V. With the opt-in *and* granted
+macOS event-posting access, the same choice pastes immediately. Never request permission at launch.
+
+- [x] **Central capability gate** — add one small shared helper for the persisted opt-in (default
+      `false`), `CGPreflightPostEventAccess()`, `CGRequestPostEventAccess()`, opening the Accessibility
+      Privacy pane, and posting exactly one Command-V shortcut. Runtime use must always require both
+      the user's opt-in and current system authorization; do not inspect the AX/UI tree.
+- [x] **Settings UX** — add a discoverable `Enhanced Access` settings section and status-menu entry.
+      Use a `Make Dragaway more powerful` toggle, show the live macOS permission state, offer an
+      `Open System Settings` action when required, and list only the capability that exists today:
+      immediate paste of selected Clipboard History text, images, or files into the previously active
+      app. Explain that switching the feature off stops Dragaway from using access but cannot revoke
+      the macOS grant itself.
+- [x] **Request only on intent** — call the system request only on the toggle's OFF→ON transition.
+      Keep the opt-in visible when approval is pending/denied, refresh authorization when Settings
+      appears and when Dragaway becomes active again, and degrade to permission-free behavior if the
+      user later revokes access.
+- [x] **Remember and restore focus** — before the picker activates Dragaway, retain the external
+      `NSWorkspace.frontmostApplication`. After a real item selection, copy the item, dismiss the
+      picker, and cooperatively return activation using the macOS 14 APIs (`yieldActivation` /
+      `activate(from:options:)`). If the app quit or activation fails, leave the item copied and do
+      nothing destructive. Esc / a second ⌃⌘V should also return focus without pasting; an outside
+      click, ⌘Tab, or ordinary focus change must not reactivate the old app and fight the user's choice.
+- [x] **Conditional paste-on-pick** — only after the remembered app is confirmed frontmost, post one
+      Command-V when opt-in + TCC authorization are both true. Disabled, denied, or revoked access
+      must stop before event creation and leave the user at the restored target app for a manual ⌘V.
+      Use a one-shot selection token plus a bounded activation-notification wait so a timeout and an
+      activation callback cannot double-paste, and re-check the exact frontmost process immediately
+      before posting. Make pasteboard write-back report success and never auto-paste an empty/missing
+      image or file payload. Selection by click and by number key share this path; cancellation must
+      never paste. Keep menu-bar Clipboard History rows copy-only in this first patch.
+- [x] **Truthful privacy documentation** — update comments and repository guidance that currently say
+      Dragaway never requests permissions / never synthesizes keys. Document the precise default-off
+      exception without weakening the no-Accessibility invariant for drag detection, hotkeys, Esc,
+      or any other feature.
+- [x] **Verify build + static safety** — two clean Debug builds; `git diff --check`; review the one-shot
+      activation token, exact-PID and live-TCC gates, failed-payload path, modal-alert focus handoff,
+      and passive-vs-explicit dismissal paths.
+- [ ] **Verify real interactions** — manually cover: first launch/default-off
+      produces no prompt; disabled selection restores focus and waits for the user's ⌘V; first enable
+      requests access; denied/pending state falls back cleanly; granted state immediately pastes text,
+      image, and file entries in representative compatible apps; permission revoked while enabled
+      falls back cleanly; click and digit selection paste once; Esc/outside selection paste nothing;
+      Clipboard History ordering and `ignoreChangeCount` still prevent duplicate captures.
+
+## Apple Mail message drops (`.eml`) (IMPLEMENTED 2026-07-13; manual drag smoke pending)
+
+**Evidence/root cause:** Apple Mail already entered `DroppableHostingView` and wrote complete `.eml`
+files into Dragaway's `Drops` directory. `.eml` was *not* removed as unsupported: the generic default
+action pool already made it pass `FileInspector.isUnsupportedFileType`. The silent failure was later in
+the legacy promise handoff — the session depended entirely on a successful receiver callback, although
+Mail can leave the promised file behind without a usable callback. The recovery is therefore gated only
+on `com.apple.mail.PasteboardTypeMessageTransfer`; DragMonitor, hover geometry, browser fallback
+ownership, and the existing Safari/image promise path stay unchanged.
+
+- [x] **Recognise mail documents + smart labels** — give `.eml` / `.emlx` the dedicated six-action
+      pool `Summarise Email`, `What Do I Need to Do?`, `Deadlines & Risks`, `Draft Email Reply`,
+      `Questions to Answer`, and `Extract Names & Contacts`, with mail-specific prompts and routing.
+      Classify mail as prose so the existing non-English translation heuristic still applies, but do
+      not add MIME containers to line-editing file utilities that could corrupt them.
+- [x] **Mail-only promise recovery** — remember the exact Mail pasteboard flavour, preserve the normal
+      Safari/image callback path, and handle Mail's one-receiver/many-callback legacy shape separately.
+      Coalesce callback and recovered URLs in one multi-message batch; independently poll only the
+      receiver's expected filenames for a bounded ~6-second recovery window. Accept only new-or-changed
+      files whose size/mtime fingerprint is stable across two observations, that are regular, non-empty
+      `.eml` / `.emlx` files passing a bounded MIME parse, and deliver them exactly once. Hold session
+      handoff outside the overlay's live collapse interval so delayed callbacks cannot open hidden chips.
+- [x] **Local bounded MIME extraction** — add a pure-Foundation RFC-822/MIME reader in
+      `FileContentExtractor`: unfold headers, decode common RFC-2047 header words, prefer a non-attachment
+      `text/plain` part, fall back to `text/html` converted by a no-I/O Foundation text pass, and decode base64 /
+      quoted-printable plus common UTF-8/Latin-1/Windows-1252 charsets. Ignore binary attachments and
+      bound input/output so a large attached file cannot become AI context.
+- [x] **Useful AI context** — emit Subject / From / To / Cc / Date plus the cleaned message body, then
+      reuse the existing character cap/truncation signal and email heuristics so suggestions and model
+      input contain the message rather than raw MIME boundaries or attachment bytes.
+- [x] **Static/extraction verification** — Debug build succeeds; standalone parser typecheck succeeds;
+      a real dropped Mail message extracts decoded headers + plain body; a synthetic HTML-only message
+      decodes its RFC-2047 subject and quoted-printable HTML while excluding a text attachment. A local
+      HTTP trap receives zero requests from remote stylesheet/image URLs embedded in that HTML.
+- [ ] **Manual drag regression smoke** — run the new Debug app and exercise: single Mail message →
+      `.eml` session + six mail labels; repeated and multi-message drops; then Finder, Safari tab/link,
+      and browser-image drops to confirm their existing routing remains unchanged.
+
+### Correction — Apple Mail inbox-row legacy promises (IMPLEMENTED 2026-07-14; FAILED OWNER SMOKE)
+
+**New evidence:** dragging a complete message row from Apple Mail reaches `draggingEntered` and
+`performDragOperation`, so the pill/destination is accepting the drop. Mail advertises both the modern
+promise types and legacy `Apple files promise pasteboard type`, but `NSFilePromiseReceiver` never writes
+the expected `.eml` and eventually reports `NSURLErrorDomain -1001`. Recovery therefore has no file to
+recover. The missing step is invoking Mail's advertised legacy fulfilment API during the live drop.
+
+- [x] **Invoke the Mail legacy promise at drop time** — only for the exact Mail message-transfer flavour,
+      snapshot the destination before fulfilment, then call
+      `NSDraggingInfo.namesOfPromisedFilesDropped(atDestination:)` inside `performDragOperation`.
+- [x] **Reuse the hardened Mail recovery** — feed the returned filenames into the existing fingerprint,
+      MIME-validation, multi-message batching, exact-once, and collapse-safe handoff path. Fall back to
+      `NSFilePromiseReceiver` only if Mail returns no legacy filenames.
+- [x] **Preserve proven paths** — leave Finder, Safari tab/link, Photos, and browser-image promise handling
+      structurally unchanged; the legacy call must be impossible for non-Mail drags.
+- [x] **Static verification** — Debug + Release builds and `git diff --check` succeed; the non-Mail receiver
+      branch remains the original DispatchGroup/normalise/session-handoff route.
+- [x] **Owner smoke test failed** — Mail wrote `.eml` files, but its returned promise label omitted the
+      extension, so recovery watched a nonexistent extensionless path. See Correction 2 below.
+
+### Correction 2 — Mail returns extensionless promise labels (IMPLEMENTED 2026-07-15; single-message owner smoke passed)
+
+**New evidence:** the legacy call now succeeds and Mail writes complete `.eml` files at the exact drop
+timestamps, but its returned promise label has no extension. Recovery treated that label as the literal
+destination filename, constructed an extensionless path, and therefore never saw the real `.eml` beside
+it. This is now a deterministic receiver/recovery mapping bug, not hover or fulfilment.
+
+- [x] For legacy Mail only, discover new-or-changed `.eml` / `.emlx` files by comparing the Drops
+      directory against the pre-fulfilment fingerprint snapshot instead of trusting the returned label.
+- [x] Preserve the returned label count as the expected multi-message batch size; require stable
+      fingerprints, bounded MIME validation, exact-once delivery, and the existing collapse guard.
+- [x] Leave modern Mail fallback and every non-Mail promise path unchanged.
+- [x] Debug + Release builds and `git diff --check` succeed.
+- [x] Owner confirms a single inbox-row drop is caught and its message content is extracted correctly.
+- [ ] Owner re-tests several inbox rows, then Safari tab and browser-image regressions.
+
+### Apple Mail drop perceived-latency fast path (IMPLEMENTED 2026-07-15; owner smoke pending)
+
+**Evidence/root cause:** the legacy Mail fulfilment call writes the real `.eml` before returning, but
+the hardened recovery deliberately waits for two stable directory observations (currently about
+0.65 s + 0.50 s) before opening the session. That safety delay, rather than MIME extraction, explains
+the visible 1–2 second pause after release.
+
+- [x] **Immediate Mail-only happy path** — directly after successful legacy fulfilment, compare the
+      Drops directory with its pre-call snapshot and use newly written, regular, non-empty `.eml` /
+      `.emlx` files to open the chips session without waiting for the recovery timer. Keep this path
+      gated on the exact Apple Mail transfer flavour; do not change Finder, Safari, Photos, or generic
+      browser-image routing.
+- [x] **Collapse-safe early handoff** — make session opening cancel a pending overlay dismissal and
+      explicitly revive a collapse that already began, so the immediate Mail handoff cannot create an
+      invisible chips card during the existing mouse-up race. Preserve the token-guarded one-window
+      lifecycle and deferred stage-write invariant.
+- [x] **Prepare content off-main, naturally queue actions** — allow the mail chips to appear from the
+      known file URLs while bounded MIME extraction runs asynchronously. Reuse the existing action
+      pipeline's await-before-provider behavior so an unusually fast chip click waits for preparation;
+      do not introduce a second explicit action queue or a new stage unless evidence requires it.
+- [x] **Retain the hardened fallback** — if the immediate directory delta is incomplete or invalid,
+      keep the current two-observation fingerprint, MIME-validation, multi-message batching, and
+      exact-once recovery unchanged.
+- [x] **Static verification** — Debug, clean arm64 Release, and x86_64 Release builds succeed;
+      `git diff --check` passes. The
+      fast path is reachable only from the exact legacy-Mail branch, partial batches still enter the
+      old recovery, and delivered-path state stops the fallback from opening the same files twice.
+- [ ] **Verify actual timing and regressions** — owner smoke for immediate single/multi-message feedback
+      plus Safari tab, browser-image, Photos, and Finder drops.
+
+### Correction — legacy Mail fast observation (IMPLEMENTED 2026-07-15; owner smoke pending)
+
+**Measured evidence:** the owner smoke still takes about 1.15 s. The latest DEBUG trace records the
+legacy fulfilment returning in **6 ms**, but the synchronous directory delta is still empty. The first
+recovery poll at 0.65 s sees one candidate and the second identical poll at 1.15 s marks it stable.
+Mail is therefore fast; the recovery cadence now accounts for almost the entire visible delay.
+
+- [x] **Accelerate only the proven legacy-Mail path** — after the empty synchronous scan, observe the
+      private Drops-directory delta at a short bounded cadence (first check around 30–50 ms, then about
+      every 50 ms). Keep the requirement for two identical size/mtime fingerprints, the advertised
+      message count, MIME sanity validation, and exact-once delivery. Expected feedback: roughly
+      100–200 ms when Mail writes normally instead of the fixed 1.15 s.
+- [x] **Retain the slow safety net** — if no complete stable batch appears during the eager window,
+      continue the existing conservative recovery through roughly six seconds. Do not change the
+      modern promise route or Finder, Safari tab/link, Photos, and browser-image handling.
+- [x] **Use the hardened early handoff** — once the eager observer validates the batch, open it through
+      the existing collapse-cancelling session path rather than imposing the old 0.55 s callback-flush
+      floor. Keep all stage writes deferred and the one-window lifecycle intact.
+- [x] **Keep fake progress as optional Plan B** — intentionally not added yet. Only if the measured
+      100–200 ms path still feels slow,
+      keep the current pill visibly alive with a Mail-specific “Preparing email…” state while recovery
+      runs. Do not add that state pre-emptively; it increases state/window blast radius without reducing
+      the underlying latency.
+- [ ] **Verify with timing evidence and regressions** — log fulfilment, first-seen, stable, and handoff
+      elapsed times; Debug + Release arm64 builds and `git diff --check` pass. Owner still needs to
+      exercise single/multi-message Mail and the existing Finder, Safari tab, browser-image, and Photos
+      paths.
+
+### Contextual Safari/Mail icons inside file pills (IMPLEMENTED 2026-07-15; owner smoke pending)
+
+**Scope:** presentation only. Files keep their real URL, extension, contents, Quick Look behavior,
+drag-out behavior, and AI/file-tool routing. Finder metadata/icon assignment is explicitly out of scope.
+
+- [x] **Persist web origin without changing TXT semantics** — attach a private Dragaway extended
+      attribute only when `DropMaterializer` creates a `.txt` from an HTTP(S) URL, including normalized
+      Safari `.webloc` promises and the late-window browser fallback. Reapply it after the atomic page
+      enrichment rewrite; if metadata is unavailable or later stripped, fall back to the normal TXT icon.
+- [x] **Centralize pill-icon presentation** — resolve `.eml` / `.emlx` to the installed Mail app icon,
+      and marker-bearing web `.txt` files to the installed Safari app icon, with SF Symbol fallbacks.
+      Every other file keeps the current `NSWorkspace` / Quick Look icon behavior.
+- [x] **Limit the override to the chips file pills** — use the contextual resolver in both the single
+      full-width pill and multi-file icon pills. Do not mutate the file's Finder icon, extension, UTI,
+      content extraction, actions, session state, sharing, or drag/drop routing.
+- [ ] **Verify presentation and regressions** — Debug + Release builds and `git diff --check`; manually
+      compare a Safari tab, Mail `.eml`, Dragaway web link, native `.txt`, and ordinary files in single-
+      and multi-file pills, including a web file after background enrichment/session reopen. Static
+      verification passes: xattr round-trip, installed Safari/Mail bundle resolution, Debug build,
+      Release build, and `git diff --check`.
+
+### Two-row file header with contextual type label (IMPLEMENTED 2026-07-15; owner smoke pending)
+
+**Target layout:** row 1 = active primary-file type on the left and the existing header actions in a
+tighter cluster on the right; row 2 = the file-pill region using the full available card width. This is
+a layout/presentation change only; drop, session, Quick Look, drag-out, sharing, and action behavior stay
+the same.
+
+- [x] **Add one short contextual type label** — expose a display label from the existing presentation
+      resolver: marker-bearing web TXT → `Safari Tab`, `.eml/.emlx` → `Mail`, `.pdf` → `PDF`, folder →
+      `Folder`, and a concise extension/type fallback for ordinary files. Bind it to the current primary
+      URL so multi-file promotion/removal updates it automatically; native TXT remains `TXT`.
+- [x] **Split `FileHeaderView` into two rows** — top row uses the type label + spacer + a compact
+      `4 × uiScale` action cluster containing the existing collapse, cached-result forward, minimize,
+      and matched close controls. Preserve their current stage visibility, actions, transitions, and
+      matched-geometry identity.
+- [x] **Give the file row the full width** — render `FilePillsRow` underneath and stretch its container
+      across the available width. Keep the persistent Share control inside the file pill at the far
+      right for both single- and multi-file sessions; keep filenames, thumbnails/contextual icons,
+      Quick Look, drag-out, carousel, removal, and multi-file per-item hover affordances intact.
+- [x] **Keep AppKit window sizing in lock-step** — replace the hard-coded chips-header `50` budget with
+      a shared two-row header-height constant and update expanded, collapsed, and media calculations.
+      Apply the same measured delta to loading/error/result minimum sizing where the shared header also
+      renders. Continue using instant `setFrame`, with no window-frame animation.
+- [x] **Owner spacing refinement** — pull the lightweight type/control row eight scaled points upward
+      and only its trailing edge into the card padding. The type remains aligned to the file pill's
+      leading edge while the controls sit nearer the top-right corner; Share and file-pill layout stay
+      unchanged.
+- [x] **Show the active AI route** — place the currently selected provider and model beside the file
+      type using the same hosted-vs-BYOK decision as request resolution. Keep fixed-model providers
+      exact; describe Gemini's action-dependent Flash/Flash Lite routing truthfully, truncate at narrow
+      widths, and expose the complete values in the hover help.
+- [ ] **Verify every state and scale** — Debug + Release builds and `git diff --check`; manually inspect
+      Safari Tab, Mail, PDF, native TXT, long filenames, single/multi-file carousel, all UI scales,
+      collapsed/expanded chips, cached-result forward, loading/result/error, minimize, close, Share,
+      Quick Look, drag-out, and primary-file promotion. Static verification passes: arm64 Debug +
+      Release builds and `git diff --check`; the owner smoke remains.
+
+### Header model switcher (IMPLEMENTED 2026-07-15; owner smoke pending)
+
+**Target:** the header reads `Filetype Model` with no separator or provider name. The model is a compact native
+menu that changes the real request route, not a cosmetic label.
+
+- [x] **Model-only trigger** — replace the provider/model caption with a plain clickable model label,
+      retaining the filetype's layout priority, responsive truncation, `uiScale`, and current top-row
+      alignment. Hosted Free displays exactly `Gemini 2.5`.
+- [x] **Build the enabled-choice list from existing configuration** — include Hosted Free while the
+      backend is available; include BYOK providers only when their existing Keychain service contains
+      a non-empty key; retain Ollama when it is the active local choice without performing a blocking
+      health request from the menu. Use friendly model names and provider names only inside the menu
+      where they disambiguate equal model families.
+- [x] **Switch the actual route** — choosing Hosted Gemini sets the entitlement tier to `.freeHosted`;
+      choosing a configured BYOK model sets both `selectedProvider` and the tier to `.byok`. Mark the
+      current choice with a checkmark and keep the header live through `@AppStorage` plus the observed
+      entitlement store.
+- [x] **Add `Provider Settings`** — put a divider and `Provider Settings` at the bottom of the menu,
+      then route it through a dedicated NotificationCenter signal to
+      `showSettings(section: .aiProvider)`, following the existing cross-component convention.
+- [ ] **Verify** — static verification passes: `git diff --check` plus arm64 Debug and Release builds.
+      Owner smoke remains: Free label, configured-provider filtering, checkmark, Free↔BYOK switching,
+      actual next-request routing, settings opening, narrow header states, and all UI scales.
+
+### Explicit BYOK model selection (IMPLEMENTED 2026-07-16; owner smoke pending)
+
+**Scope:** no automatic BYOK routing. A user-selected provider/model pair is the exact route for the
+next request. Dragaway Hosted Free keeps its existing server-owned `fast/strong/extra` cost policy;
+direct OpenAI, Anthropic, Gemini, Groq, and Ollama calls never silently replace the selected model.
+
+- [x] **Central model catalogue + selection store** — add provider-neutral model descriptors, one
+      persisted selection per provider, safe current defaults, and a 24-hour local cache. Fetch the
+      account's live model list from each provider's official endpoint when Provider Settings opens
+      or the user explicitly refreshes; Ollama lists locally installed models. A failed refresh keeps
+      the last successful cache and never blocks an AI request or the pill.
+- [x] **Curate live results without freezing versions** — intersect live availability with a small
+      Dragaway compatibility layer (chat/text first, vision metadata where known), group known models
+      cleanly, and retain unknown provider models under an explicit “Other available models” section
+      instead of hiding new releases. Exclude obvious embedding/audio/image-generation/fine-tune
+      entries from this text-completion picker.
+- [x] **Execute the exact selected model** — inject the persisted model ID into every BYOK provider
+      and remove Gemini's action-tier model switch on that path. Keep `RoutingPlan.maxOutputTokens`
+      as an output safety guard, but make `tier` a hosted-only concern. If a selected model is no
+      longer live, fail with a model-specific actionable error; do not silently use the default.
+- [x] **Header + Provider Settings UI** — the compact header menu lists models belonging to all
+      configured providers, marks the exact active provider/model, and can switch routes immediately.
+      Provider Settings shows the selected provider's model picker, cached/loading/error state,
+      last refresh, and a `Refresh Models` action. Hosted Free remains the single fixed
+      `Gemini 2.5` choice.
+- [x] **Lifecycle and trust** — preserve a selected-but-unavailable model visibly so the user can
+      choose a replacement. Stable IDs are preferred; aliases/preview-looking IDs are labelled
+      without automatic migration. Post one configuration-change signal so every open picker updates.
+- [x] **Verify** — `git diff --check`, arm64 Debug, and arm64 Release pass. Static audit proves every
+      BYOK request body receives the persisted exact model ID, every reply/stream image path applies
+      the capability guard, Gemini discovery and execution share the OpenAI-compatible API surface,
+      and Hosted Free is unchanged. Owner smoke remains: configure at least two BYOK keys, refresh
+      each catalogue, switch provider/model from both Settings and the header, relaunch to confirm
+      persistence, test offline cache, Ollama installed models, and an unavailable selection.
+
+## Product page — replace viewport recordings (DONE 2026-07-13)
+
+- [x] Replace all placeholder viewport sources with the named recordings from `assets/Recordings`.
+- [x] Split chapter 1 into four video states: File, Safari tab, selections/search results, and result.
+- [x] Update the GSAP video-index and progress-dot routing for seven total recordings.
+- [x] Verify syntax, playback transitions, responsive layout, and browser console state.
+
+## Product page — revert playback-aware scroll experiments (DONE 2026-07-13)
+
+- [x] Remove duration-weighted dwell and playback-credit gate behavior.
+- [x] Restore the linear scrubbed Stage timeline while preserving all seven recording mappings.
+- [x] Preserve progress-dot navigation, reverse scroll, reduced motion, and normal outro release.
+- [x] Verify syntax and the complete desktop/mobile scroll sequence in the browser.
+- [x] Capture the interaction correction in `tasks/lessons.md`.
+
+## Release v1.1.4 (IN PROGRESS 2026-07-20)
+
+**Scope:** ship the accumulated live-product work on `main` since v1.1.3. Keep `thesis` untouched.
+
+- [x] Audit the complete `v1.1.3..main` plus working-tree delta and derive truthful release notes.
+- [x] Bump the app and extension to marketing version 1.1.4 / build 7 and update the README headline.
+- [x] Run diff checks and clean Debug + Release verification builds.
+- [ ] Build, Developer-ID sign, notarize, staple, and validate `Dragaway-1.1.4.dmg`; generate a signed Sparkle entry.
+- [ ] Commit the reviewed v1.1.4 source on `main`, tag `v1.1.4`, and push `main` plus the tag.
+- [ ] Publish the GitHub release with the notarized DMG and concise user-facing notes.
+- [ ] Commit and push the generated signed `appcast.xml`, then verify the public release asset and feed.

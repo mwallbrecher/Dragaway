@@ -64,10 +64,13 @@ open MacNotchAI.xcodeproj
 - **No test target exists.** There is nothing to run for unit/UI tests; "verification" means building
   and exercising the app manually (drag a file, drop, run an action).
 - The app is **non-sandboxed** (`ENABLE_APP_SANDBOX = NO`) so its global `NSEvent` *mouse*
-  monitors work. As of v1.1.3 it requests **no permissions at all** — drag detection, hotkeys,
-  and the radial launcher use ungated APIs, and Esc dismissal rides the window responder chain
-  (`OverlayWindow.cancelOperation`). Do **not** reintroduce Accessibility-gated APIs (global
-  keyboard monitors, AX tree access) without an explicit decision — see `tasks/lessons.md`.
+  monitors work. All core behavior remains permission-free: drag detection, hotkeys, and the radial
+  launcher use ungated APIs, and Esc dismissal rides the window responder chain
+  (`OverlayWindow.cancelOperation`). The sole Accessibility exception is **Enhanced Access**, an
+  explicit default-off setting that synthesizes one ⌘V after a Clipboard History selection; without
+  it the picker restores the previous app and waits for the user's own ⌘V. Do **not** use that grant
+  for global keyboard monitors, AX-tree access, or another feature without an explicit decision — see
+  `tasks/lessons.md`.
 - `MACOSX_DEPLOYMENT_TARGET = 14.0`, Swift 5, hardened runtime on. The mic entitlement
   (`com.apple.security.device.audio-input`) in `MacNotchAI.entitlements` is mandatory for dictation.
 - Editing `project.pbxproj` programmatically: it is **tab-indented**. String edits with spaces will
@@ -175,9 +178,10 @@ by a relaunch-stable `signature` (`T:`/`F:`/`I:…`); our own copy-backs are ski
 Persists as `clipboard_history.json` + sibling PNGs in `clip_images/` under App Support. Surfaced **two**
 ways: the menu-bar **"Clipboard History"** submenu (last 20, `AppDelegate.buildClipboardSubmenu`; row
 copies back, ⌥-alt removes; plus a "Track Clipboard" checkbox) and the **⌃⌘V picker popup**
-(`UI/ClipboardPickerView.swift`, last 10). Picking an item only **copies it back** to the pasteboard
-(`copyToPasteboard` — the user then presses ⌘V; we never synthesise keystrokes). The picker is a
-borderless `ClipboardPickerPanel` (`canBecomeKey`, `.floating`, liquid-glass) driven by the
+(`UI/ClipboardPickerView.swift`, last 10). Picking an item copies it back and restores the previously
+active app. With default-off **Enhanced Access** (`Core/EnhancedAccess.swift`) and current macOS
+event-posting authorization it then sends one ⌘V; otherwise the user presses ⌘V manually. The picker
+is a borderless `ClipboardPickerPanel` (`canBecomeKey`, `.floating`, liquid-glass) driven by the
 `ClipboardPicker.shared` controller (mirrors `QuickLookController`): a local keyDown monitor claims the
 digit keys (1–9, 0 → 10th) + Esc while it's key, a global click monitor + `windowDidResignKey` dismiss.
 The system-wide **⌃⌘V** is a Carbon `RegisterEventHotKey` (`Core/GlobalHotkey.swift`) — it **consumes**

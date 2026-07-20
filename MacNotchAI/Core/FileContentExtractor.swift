@@ -36,6 +36,22 @@ struct FileContentExtractor {
         let ext = url.pathExtension.lowercased()
 
         switch ext {
+        case "eml", "emlx":
+            // MIME traversal + HTML cleanup can touch several MiB. Keep it off the
+            // default MainActor while the security scope remains active in this call.
+            let extracted = try await Task.detached(priority: .userInitiated) {
+                let email = try EmailContentExtractor.extract(from: url)
+                let readableBody = email.bodyIsHTML
+                    ? EmailContentExtractor.plainText(fromHTML: email.body)
+                    : email.body
+                return (email.formattedText(body: readableBody), email.sourceTruncated)
+            }.value
+            let result = capped(extracted.0, limit: limit)
+            return Result(
+                text: result.text,
+                truncated: result.truncated || extracted.1
+            )
+
         case "pdf":
             return try extractPDF(from: url, limit: limit)
 

@@ -34,8 +34,8 @@ Therefore the only two reliable levers on the bill are:
 | **token count** | prompt caching, input trimming, output ceiling | ✅ | ✅ |
 
 Model routing is the highest-impact lever for the bill — but it only applies where **we
-choose the model**, i.e. the hosted Worker. BYOK users pick their own provider; there we
-can only route *within* that provider's lineup, and any saving is theirs, not ours.
+choose the model**, i.e. the hosted Worker. BYOK users choose an exact provider/model
+pair; any price/quality trade-off there is explicit and belongs to them, not us.
 
 ---
 
@@ -44,12 +44,16 @@ can only route *within* that provider's lineup, and any saving is theirs, not ou
 - **Hosted (free/Pro) tier → the Worker decides.** The client sends the action, file
   metadata, input size, and a suggested tier/output budget; the Worker picks the actual
   model and owns the key. This is where the bill is won.
-- **BYOK tier → the client decides, within one provider.** Fixed model per provider today
-  (Groq Llama-3.1-8B, Gemini 2.5 Flash, GPT-4o-mini, Claude Haiku 4.5, local Ollama).
-  Routing here saves the *user's* money; lowest priority.
+- **BYOK tier → the user decides exactly.** `AIModelCatalogStore` loads the account's
+  live models from the provider, caches them for 24 hours, and persists one exact model
+  ID per provider. Every direct request sends that ID unchanged. A missing model is shown
+  as unavailable and errors explicitly; it is never replaced silently. Catalogue and
+  completion calls use the same API surface (for example, Gemini's OpenAI-compatible
+  `/models` list feeds its OpenAI-compatible Chat Completions route).
 
-The client computes a **routing plan** from the action and ships it on every request so
-both tiers share one source of truth (`AI/ModelRouting.swift`).
+The client still computes a **routing plan** from the action on every request
+(`AI/ModelRouting.swift`). `maxOutputTokens` is used by every route; `tier` chooses a
+model only on the hosted Worker and is deliberately ignored by BYOK providers.
 
 ---
 
@@ -80,7 +84,7 @@ extra round-trip adds latency and cost, so avoid it on the common path.
   wrong answer).
 - Evaluation / judgement / freeform / rich image description → **strong** model.
 
-Three tiers (`fast`, `strong`, `extra`). The Worker maps them to concrete models:
+Three hosted tiers (`fast`, `strong`, `extra`). The Worker maps them to concrete models:
 `fast → gemini-2.5-flash-lite`, `strong → gemini-2.5-flash`, `extra → gemini-2.5-pro`.
 Do **not** build a 6-way model matrix you can't tune.
 
@@ -148,9 +152,10 @@ uses its action's static plan; a typed prompt routes through
 - OCR / describe / explain / freeform → mid ceilings
 
 **Gemini caveat:** on Google's OpenAI-compat endpoint, "thinking" tokens count against
-`max_tokens`. The Gemini provider therefore adds reasoning headroom and a floor on top of
-the requested ceiling (with `reasoning_effort: low`) so a tight cap can't starve the
-visible answer. (See lessons — this caused the 2.5-Flash cutoff.)
+`max_tokens`. When the live model metadata reports thinking support, the Gemini provider
+adds reasoning headroom and a floor on top of the requested ceiling (with
+`reasoning_effort: low`) so a tight cap can't starve the visible answer. Non-thinking
+models receive the plain safety ceiling.
 
 ---
 
@@ -215,8 +220,9 @@ fairly.
 
 ---
 
-## 10. Product principle (unchanged)
+## 10. Product principle
 
-The user should never think about models. Drop the file, pick the action, get the right
-level of AI automatically — cheapest reliable path by default, escalate only when the work
-genuinely needs it.
+Hosted Dragaway should remain effortless: drop the file, pick the action, and let the
+server choose the cheapest reliable tier. BYOK is intentionally different: the user can
+see and choose the exact model they pay for, and Dragaway must never change that choice
+quietly.

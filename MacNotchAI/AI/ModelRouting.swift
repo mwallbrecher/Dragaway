@@ -11,7 +11,7 @@ import Foundation
 //     only saves money when a model loops to the cap). Applied by every provider.
 //   • `tier` — which model to use. The hosted Worker maps `tier → model`
 //     (fast → gemini-2.5-flash-lite, strong → gemini-2.5-flash, extra → gemini-2.5-pro
-//     for Pro only). BYOK providers use a fixed model per provider, so tier is a no-op.
+//     for Pro only). BYOK sends the user's exact persisted model, so tier is a no-op.
 //
 // The `tier` for the 17 built-in actions is decided ENTIRELY by their task class — a
 // deterministic switch, no text analysis, no keywords. The single fuzzy case is a
@@ -62,13 +62,13 @@ extension AIAction {
     var routing: RoutingPlan {
         switch self {
         // ── Extraction: mechanical, bounded list output → cheap model ─────────
-        case .extractKeyDates, .extractKeyPoints:
+        case .extractKeyDates, .extractKeyPoints, .emailQuestions:
             return RoutingPlan(tier: .fast, taskClass: .extraction, maxOutputTokens: 512)
 
         // ── Summarisation: mechanical, short output → cheap model ─────────────
         case .summariseShort:
             return RoutingPlan(tier: .fast, taskClass: .summarisation, maxOutputTokens: 120)
-        case .summariseBullets:
+        case .summariseBullets, .summariseEmail:
             return RoutingPlan(tier: .fast, taskClass: .summarisation, maxOutputTokens: 512)
 
         // ── Transformation: mechanical, output ≈ input → cheap model ──────────
@@ -84,6 +84,10 @@ extension AIAction {
 
         // ── Data reasoning: judgement over numbers → capable model ────────────
         case .showTrends, .findOutliers, .suggestCharts:
+            return RoutingPlan(tier: .strong, taskClass: .explanation, maxOutputTokens: 768)
+
+        // ── Mail triage: implicit asks / risks require judgement ─────────────
+        case .emailNextSteps, .emailDeadlinesRisks:
             return RoutingPlan(tier: .strong, taskClass: .explanation, maxOutputTokens: 768)
 
         // ── Generative prose: reply / report / brief / social → capable model ─

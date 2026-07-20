@@ -116,7 +116,7 @@ class OverlayViewModel: ObservableObject {
     /// The extracted document context, built once per session and reused for every
     /// turn so the file is never re-read / re-extracted. Cleared when the file set
     /// changes (didSet on additionalFileURLs) or on restart.
-    struct BaseContext {
+    struct BaseContext: Sendable {
         let content: String
         let imageURL: URL?
         let truncated: Bool
@@ -175,6 +175,13 @@ class OverlayViewModel: ObservableObject {
     @Published var isAwaitingReply = false
     /// Cached extracted document context for the current session (see BaseContext).
     var baseContext: BaseContext? = nil
+    /// Mail promise drops can finish their local MIME extraction while the user is
+    /// reading the chips. A chip tapped before completion awaits this same Task, so
+    /// preparation is never duplicated and no provider request starts with partial
+    /// content. Other drop types keep their existing lazy-on-first-action behaviour.
+    private var baseContextPreparation: Task<BaseContext, Error>?
+    private var baseContextPreparationPaths: [String] = []
+    private var baseContextPreparationLimit = 0
 
     @Published var stage: Stage = .waitingForDrop
     // Active tab in the stage-2 prompt section. Reset to .suggested on each fresh
@@ -257,7 +264,7 @@ class OverlayViewModel: ObservableObject {
     /// Cleared on reset() and setChips() (fresh session). Changing the file set
     /// invalidates the cached BaseContext so the next turn re-extracts.
     @Published var additionalFileURLs: [URL] = [] {
-        didSet { baseContext = nil }
+        didSet { invalidateBaseContext() }
     }
 
     /// Every file in the current session — primary (the stage URL) first, then any
@@ -400,6 +407,77 @@ class OverlayViewModel: ObservableObject {
         applySmartActions(base: base, primary: primary)
     }
 
+    /// Start extracting a known, fully materialised session without delaying its UI.
+    /// The result remains inside the Task until the first AI action consumes it.
+    func prepareBaseContext(for urls: [URL], charLimit: Int) {
+        guard let primary = urls.first else { return }
+        let paths = urls.map { $0.standardizedFileURL.path }
+        if baseContextPreparationPaths == paths,
+           baseContextPreparationLimit == charLimit,
+           baseContextPreparation != nil {
+            return
+        }
+
+        baseContextPreparation?.cancel()
+        baseContextPreparationPaths = paths
+        baseContextPreparationLimit = charLimit
+        let additional = Array(urls.dropFirst())
+        baseContextPreparation = Task(priority: .userInitiated) {
+            let prepared = try await buildMultiFileContent(
+                primary: primary,
+                additional: additional,
+                charLimit: charLimit
+            )
+            try Task.checkCancellation()
+            return BaseContext(
+                content: prepared.content,
+                imageURL: prepared.imageURL,
+                truncated: prepared.truncated
+            )
+        }
+    }
+
+    /// Return the in-flight/completed preparation only when it still belongs to the
+    /// exact current file set and extraction ceiling. A changed session falls back to
+    /// the ordinary extraction path in `sendTurn`.
+    func preparedBaseContext(
+        for urls: [URL],
+        charLimit: Int
+    ) async throws -> BaseContext? {
+        let paths = urls.map { $0.standardizedFileURL.path }
+        guard paths == baseContextPreparationPaths,
+              charLimit == baseContextPreparationLimit,
+              let preparation = baseContextPreparation
+        else { return nil }
+
+        do {
+            let prepared = try await preparation.value
+            guard paths == baseContextPreparationPaths,
+                  charLimit == baseContextPreparationLimit
+            else { return nil }
+            baseContextPreparation = nil
+            baseContextPreparationPaths = []
+            baseContextPreparationLimit = 0
+            return prepared
+        } catch {
+            if paths == baseContextPreparationPaths,
+               charLimit == baseContextPreparationLimit {
+                baseContextPreparation = nil
+                baseContextPreparationPaths = []
+                baseContextPreparationLimit = 0
+            }
+            throw error
+        }
+    }
+
+    private func invalidateBaseContext() {
+        baseContext = nil
+        baseContextPreparation?.cancel()
+        baseContextPreparation = nil
+        baseContextPreparationPaths = []
+        baseContextPreparationLimit = 0
+    }
+
     /// Off-main content peek → main-thread reorder → patch the live chips actions if the
     /// order actually changed and the session is still on the same primary file.
     private func applySmartActions(base: [AIAction], primary: URL) {
@@ -425,7 +503,7 @@ class OverlayViewModel: ObservableObject {
     /// a fresh conversation on the same file without re-dropping it.
     func restartConversation(url: URL) {
         conversation = []
-        baseContext = nil
+        invalidateBaseContext()
         isAwaitingReply = false
         cachedResult = nil
         contentTruncated = false
@@ -606,6 +684,10 @@ class OverlayViewModel: ObservableObject {
 /// from the same numbers — any drift would clip content or leave a gap. All values
 /// are UNSCALED; multiply by the UI scale at the call site.
 enum ChipsLayout {
+    /// Context label/control row + gap + file pill, including the same vertical
+    /// slack previously budgeted for the one-row header.
+    static let fileHeaderHeight: CGFloat = 80
+
     static let rowStride:    CGFloat = 36   // per-row height budget (chip + slack)
     static let rowSpacing:   CGFloat = 6
     static let maxVisibleRows = 5           // beyond this the content region scrolls

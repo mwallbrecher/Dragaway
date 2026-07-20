@@ -18,6 +18,13 @@ enum FileThumbnail {
     /// the same icon, so there's no regression versus the old behaviour.
     @MainActor
     static func load(for url: URL, size: CGFloat, onImage: @escaping (NSImage) -> Void) {
+        // Contextual source icons are an intentional pill presentation. Do not let a
+        // later Quick Look document thumbnail overwrite the Safari / Mail identity.
+        if let contextual = FilePresentation.contextualIcon(for: url) {
+            onImage(contextual)
+            return
+        }
+
         // 1 — instant fallback so the slot is filled while QuickLook works.
         onImage(NSWorkspace.shared.icon(forFile: url.path))
 

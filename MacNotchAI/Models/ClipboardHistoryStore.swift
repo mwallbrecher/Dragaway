@@ -7,8 +7,8 @@ import UniformTypeIdentifiers
 // A lightweight clipboard manager. Polls `NSPasteboard.general.changeCount` and
 // records each new copy — text, image, or file(s) — newest-first, capped at 20.
 // Surfaced two ways: the menu-bar "Clipboard History" submenu (last 20) and the
-// ⌃⌘V picker popup (last 10). Picking an item COPIES it back to the clipboard
-// (the user then presses ⌘V); we never synthesise keystrokes.
+// ⌃⌘V picker popup (last 10). Picking an item always copies it back; the picker
+// then either restores focus for a manual ⌘V or, with Enhanced Access, pastes once.
 //
 // Privacy: pasteboard items flagged sensitive/concealed/transient by the source app
 // (password managers set these) are NEVER captured. Everything else persists as JSON
@@ -179,22 +179,32 @@ final class ClipboardHistoryStore: ObservableObject {
 
     // MARK: - Copy back (picker / menu selection)
 
-    /// Write `item` back to the system pasteboard and move it to the front. Copy-only —
-    /// the user presses ⌘V themselves. The change is tagged so the poll won't re-add it.
-    func copyToPasteboard(_ item: ClipItem) {
+    /// Write `item` back to the system pasteboard and move it to the front. Returns
+    /// false before clearing the current clipboard when the stored payload is gone.
+    /// The successful change is tagged so the poll won't re-add it.
+    @discardableResult
+    func copyToPasteboard(_ item: ClipItem) -> Bool {
         let pb = NSPasteboard.general
-        pb.clearContents()
+        let wrote: Bool
         switch item.kind {
         case .text:
-            if let t = item.text { pb.setString(t, forType: .string) }
+            guard let text = item.text else { return false }
+            pb.clearContents()
+            wrote = pb.setString(text, forType: .string)
         case .files:
-            let urls = (item.filePaths ?? []).map { URL(fileURLWithPath: $0) as NSURL }
-            if !urls.isEmpty { pb.writeObjects(urls) }
+            let urls = (item.filePaths ?? [])
+                .filter { FileManager.default.fileExists(atPath: $0) }
+                .map { URL(fileURLWithPath: $0) as NSURL }
+            guard !urls.isEmpty else { return false }
+            pb.clearContents()
+            wrote = pb.writeObjects(urls)
         case .image:
-            if let img = loadImage(item), let tiff = img.tiffRepresentation {
-                pb.setData(tiff, forType: .tiff)
-            }
+            guard let image = loadImage(item), let tiff = image.tiffRepresentation else { return false }
+            pb.clearContents()
+            wrote = pb.setData(tiff, forType: .tiff)
         }
+        guard wrote else { return false }
+
         ignoreChangeCount = pb.changeCount
         lastChangeCount = pb.changeCount
 
@@ -203,6 +213,7 @@ final class ClipboardHistoryStore: ObservableObject {
             items.insert(it, at: 0)
             save()
         }
+        return true
     }
 
     // MARK: - Images
