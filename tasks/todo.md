@@ -2243,14 +2243,14 @@ direct OpenAI, Anthropic, Gemini, Groq, and Ollama calls never silently replace 
 - [x] Verify syntax and the complete desktop/mobile scroll sequence in the browser.
 - [x] Capture the interaction correction in `tasks/lessons.md`.
 
-## Release v1.1.4 (IN PROGRESS 2026-07-20)
+## Release v1.1.4 (DONE 2026-07-20)
 
 **Scope:** ship the accumulated live-product work on `main` since v1.1.3. Keep `thesis` untouched.
 
 - [x] Audit the complete `v1.1.3..main` plus working-tree delta and derive truthful release notes.
 - [x] Bump the app and extension to marketing version 1.1.4 / build 7 and update the README headline.
 - [x] Run diff checks and clean Debug + Release verification builds.
-- [ ] Build, Developer-ID sign, notarize, staple, and validate `Dragaway-1.1.4.dmg`; generate a signed Sparkle entry.
-- [ ] Commit the reviewed v1.1.4 source on `main`, tag `v1.1.4`, and push `main` plus the tag.
-- [ ] Publish the GitHub release with the notarized DMG and concise user-facing notes.
-- [ ] Commit and push the generated signed `appcast.xml`, then verify the public release asset and feed.
+- [x] Build, Developer-ID sign, notarize, staple, and validate `Dragaway-1.1.4.dmg`; generate a signed Sparkle entry.
+- [x] Commit the reviewed v1.1.4 source on `main`, tag `v1.1.4`, and push `main` plus the tag.
+- [x] Publish the GitHub release with the notarized DMG and concise user-facing notes.
+- [x] Commit and push the generated signed `appcast.xml`, then verify the public release asset and feed.
