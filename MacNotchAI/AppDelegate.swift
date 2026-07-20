@@ -58,6 +58,12 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // request event-posting access for Clipboard History paste-on-pick. Never
         // make any core path depend on that optional permission.
         DragMonitor.shared.startMonitoring()
+
+        // THESIS (Computational Intent Pipeline): passive signal capture — inert
+        // unless the research flag is set (Debug menu → Intent Engine, or
+        // `defaults write com.wallbrecher.dragaway intentEngineEnabled -bool YES`).
+        // M1 uses zero permissions. See docs/thesis/ARCHITECTURE.md.
+        IntentEngine.shared.startIfEnabled()
         observeDragState()
         observeDragOutState()
         observeStageChanges()
@@ -424,6 +430,54 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
         addItem(to: menu, title: "Help & Tutorial…", action: #selector(menuHelp))
         addItem(to: menu, title: "Send Feedback…", action: #selector(menuFeedback))
+
+#if DEBUG
+        // ── THESIS: Intent Engine controls (Debug builds only, thesis branch) ────
+        // Menu open is also a reconcile moment: for a menu-bar app it's the likeliest
+        // "user came back from System Settings after granting AX" trigger.
+        IntentEngine.shared.reconcileSensors()
+        menu.addItem(.separator())
+        let intentItem = NSMenuItem(title: "Intent Engine (Thesis)", action: nil, keyEquivalent: "")
+        let intentSub = NSMenu()
+        let engineRunning = IntentEngine.shared.isRunning
+        let toggle = addItem(to: intentSub,
+                             title: engineRunning ? "Stop Signal Capture" : "Start Signal Capture",
+                             action: #selector(menuIntentToggle))
+        toggle.state = engineRunning ? .on : .off
+        let readOnly = addItem(to: intentSub, title: "Read-Only Capture (no affordances)",
+                               action: #selector(menuIntentReadOnly))
+        readOnly.state = IntentEngine.shared.isReadOnly ? .on : .off
+        let recording = IntentEngine.shared.recorder.isRecording
+        let record = addItem(to: intentSub,
+                             title: recording
+                                ? "Stop Recording (\(IntentEngine.shared.recorder.eventCount) events)"
+                                : "Record Trace",
+                             action: #selector(menuIntentRecord))
+        record.state = recording ? .on : .off
+        addItem(to: intentSub, title: "Replay Trace…", action: #selector(menuIntentReplay))
+        addItem(to: intentSub, title: "Open Traces Folder", action: #selector(menuIntentOpenTraces))
+        intentSub.addItem(.separator())
+        addItem(to: intentSub, title: "Show Intent Scores", action: #selector(menuIntentScores))
+        let axOn = IntentEngine.shared.axSensorEnabled
+        let axTrusted = AXIsProcessTrusted()
+        let ax = addItem(to: intentSub,
+                         title: axOn && !axTrusted
+                            ? "Selection Sensor (grant Accessibility…)"
+                            : "Selection Sensor (Accessibility)",
+                         action: #selector(menuIntentAXSensor))
+        ax.state = (axOn && axTrusted) ? .on : .off
+        addItem(to: intentSub, title: "Summon Intent Ticker (⌃⌥⌘I)", action: #selector(menuIntentTicker))
+        intentSub.addItem(.separator())
+        let langItem = NSMenuItem(title: "Participant Languages…", action: nil, keyEquivalent: "")
+        langItem.submenu = buildParticipantLanguagesMenu()
+        intentSub.addItem(langItem)
+        intentSub.addItem(.separator())
+        addItem(to: intentSub, title: "Run Golden Checks", action: #selector(menuIntentGoldenChecks))
+        addItem(to: intentSub, title: "Open Intent Config", action: #selector(menuIntentOpenConfig))
+        addItem(to: intentSub, title: "Reload Intent Config", action: #selector(menuIntentReloadConfig))
+        intentItem.submenu = intentSub
+        menu.addItem(intentItem)
+#endif
 
         menu.addItem(.separator())
 
@@ -1137,7 +1191,10 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     /// ⌃⌘N: open a session from whatever the clipboard holds — copied files directly,
     /// anything else (text / link / image) through the same materializer the
     /// drag-anything pipeline uses. Beeps when the clipboard has nothing usable.
-    private func openSessionFromClipboard() {
+    // Internal (not private): the THESIS whisper-accept path reuses exactly this
+    // flow — AffordanceController hands off here so raw clipboard text enters a
+    // session only after explicit user consent (docs/thesis/ARCHITECTURE.md §7).
+    func openSessionFromClipboard() {
         let pb = NSPasteboard.general
         var urls = (pb.readObjects(forClasses: [NSURL.self],
                                    options: [.urlReadingFileURLsOnly: true]) as? [URL]) ?? []
@@ -1749,6 +1806,159 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         onboardingWindow?.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
     }
+
+#if DEBUG
+    // MARK: - THESIS: Intent Engine debug controls (docs/thesis/ARCHITECTURE.md)
+
+    @objc private func menuIntentToggle() {
+        IntentEngine.shared.isEnabled.toggle()   // setter starts/stops the live engine
+    }
+
+    @objc private func menuIntentReadOnly() {
+        IntentEngine.shared.isReadOnly.toggle()  // attaches/detaches affordances live
+    }
+
+    @objc private func menuIntentRecord() {
+        let engine = IntentEngine.shared
+        if engine.recorder.isRecording {
+            engine.recorder.stop()
+        } else {
+            if !engine.isRunning { engine.isEnabled = true }
+            engine.recorder.start(bus: engine.bus)
+        }
+    }
+
+    @objc private func menuIntentReplay() {
+        let panel = NSOpenPanel()
+        panel.directoryURL = TraceRecorder.tracesDirectory()
+        panel.allowsMultipleSelection = false
+        panel.canChooseDirectories = false
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+
+        // Quiesce the live pipeline first — live and replayed timelines must not mix.
+        let wasRunning = IntentEngine.shared.isRunning
+        IntentEngine.shared.stop()
+        IntentEngine.shared.resetPipeline()   // clean slate: score the trace alone
+        defer { if wasRunning { IntentEngine.shared.start() } }
+
+        let alert = NSAlert()
+        do {
+            let summary = try TraceReplayer.replay(url, into: IntentEngine.shared.bus)
+            alert.messageText = "Trace replayed"
+            // Golden-trace check in one glance: what would the scorer say at the
+            // end of this recorded session? (Scored at EVENT time, not wall clock.)
+            let scores = summary.lastEventTime.map {
+                "\n\nScores at trace end:\n" + IntentEngine.shared.scoresDescription(at: $0)
+            } ?? ""
+            alert.informativeText = summary.description + scores
+        } catch {
+            alert.messageText = "Replay failed"
+            alert.informativeText = error.localizedDescription
+        }
+        alert.runModal()
+    }
+
+    @objc private func menuIntentOpenTraces() {
+        NSWorkspace.shared.open(TraceRecorder.tracesDirectory())
+    }
+
+    @objc private func menuIntentScores() {
+        let alert = NSAlert()
+        alert.messageText = "Intent scores (live)"
+        // The language source is shown here on purpose: before a study session the
+        // operator must be able to see whose languages "foreign" is judged against.
+        alert.informativeText = IntentEngine.shared.scoresDescription()
+            + "\n\n— foreign-language reference —\n"
+            + IntentEngine.shared.languageSourceDescription
+        alert.runModal()
+    }
+
+    @objc private func menuIntentAXSensor() {
+        let engine = IntentEngine.shared
+        if engine.axSensorEnabled, !AXIsProcessTrusted() {
+            engine.requestAXPermission()      // enabled but not yet granted → (re)ask
+        } else if engine.axSensorEnabled {
+            engine.axSensorEnabled = false    // granted + on → turn off
+        } else {
+            engine.axSensorEnabled = true     // off → on (and ask if needed)
+            if !AXIsProcessTrusted() { engine.requestAXPermission() }
+        }
+    }
+
+    @objc private func menuIntentTicker() {
+        IntentEngine.shared.affordances.toggleTicker()
+    }
+
+    /// THESIS: the participant's language repertoire — what `foreign_language_clip` is
+    /// judged against. Sessions run on the RESEARCHER's Mac, so the machine locale is
+    /// always the wrong answer; this menu is the per-participant setup step.
+    private func buildParticipantLanguagesMenu() -> NSMenu {
+        let menu = NSMenu()
+        let engine = IntentEngine.shared
+
+        addInfoItem(to: menu, title: engine.languageSourceDescription)
+        if let warning = engine.languageConfigWarning { addInfoItem(to: menu, title: warning) }
+        menu.addItem(.separator())
+
+        for lang in IntentEngine.commonLanguages {
+            let item = addItem(to: menu, title: "\(lang.name) (\(lang.code))",
+                               action: #selector(menuIntentToggleLanguage(_:)),
+                               represented: lang.code)
+            item.state = engine.isLanguageSelected(lang.code) ? .on : .off
+        }
+
+        // "Indian" is not a detectable language — the recognizer distinguishes these
+        // individually, so the operator picks the specific one(s) the participant reads.
+        let indian = NSMenuItem(title: "Indian languages…", action: nil, keyEquivalent: "")
+        let indianSub = NSMenu()
+        for lang in IntentEngine.indianLanguages {
+            let item = addItem(to: indianSub, title: "\(lang.name) (\(lang.code))",
+                               action: #selector(menuIntentToggleLanguage(_:)),
+                               represented: lang.code)
+            item.state = engine.isLanguageSelected(lang.code) ? .on : .off
+        }
+        indian.submenu = indianSub
+        menu.addItem(indian)
+
+        menu.addItem(.separator())
+        let englishOnly = addItem(to: menu, title: "None — native English only",
+                                  action: #selector(menuIntentLanguagesEnglishOnly))
+        englishOnly.state = (engine.hasExplicitLanguages
+                             && IntentText.userLanguages == ["en"]) ? .on : .off
+        let locale = addItem(to: menu, title: "Use this Mac's locale (⚠︎ not for sessions)",
+                             action: #selector(menuIntentLanguagesUseLocale))
+        locale.state = engine.hasExplicitLanguages ? .off : .on
+        return menu
+    }
+
+    @objc private func menuIntentToggleLanguage(_ sender: NSMenuItem) {
+        guard let code = sender.representedObject as? String else { return }
+        IntentEngine.shared.toggleLanguage(code)
+    }
+
+    @objc private func menuIntentLanguagesEnglishOnly() {
+        IntentEngine.shared.setUserLanguages(["en"])
+    }
+
+    @objc private func menuIntentLanguagesUseLocale() {
+        IntentEngine.shared.clearUserLanguages()
+    }
+
+    @objc private func menuIntentGoldenChecks() {
+        let alert = NSAlert()
+        alert.messageText = "Intent golden checks"
+        alert.informativeText = IntentGoldenChecks.report()
+        alert.runModal()
+    }
+
+    @objc private func menuIntentOpenConfig() {
+        NSWorkspace.shared.open(IntentConfig.fileURL())
+    }
+
+    @objc private func menuIntentReloadConfig() {
+        IntentEngine.shared.reloadConfig()
+    }
+#endif
 
 }
 
