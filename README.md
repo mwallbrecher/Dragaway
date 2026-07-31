@@ -10,6 +10,24 @@ Dragaway (fka AI-Drop) is a native macOS menu-bar app that turns your physical n
 
 ---
 
+## What's New in v1.1.5
+
+- **Drop complete folders** — Dragaway scans folders locally within strict depth, size, file-count,
+  and time limits. A transparent preview shows supported, omitted, and skipped files before one
+  provider request explains the folder or answers a custom question.
+- **Choose exactly which folder files are analysed** — the folder preview supports Finder-style
+  selection, including Command/Control multi-select, Shift ranges, Command-A, and Space for Quick
+  Look. Selection changes reuse the session's local extraction cache instead of parsing files again.
+- **Far more reliable website understanding** — Safari tabs and URL drops now use Mozilla
+  Readability for structured article extraction, with an isolated ephemeral rendered-page fallback
+  for JavaScript-heavy sites. A fast action waits for that same bounded preparation task.
+- **A navigable model menu** — the native macOS model picker is grouped by provider, model family,
+  and exact model while the fixed Dragaway Free option stays simple.
+- **Stronger session reliability** — overlapping AI turns, stale asynchronous results, renamed web
+  drops, and folder-session restores are guarded so content cannot land in the wrong session.
+
+---
+
 ## What's New in v1.1.4
 
 - **Drop Apple Mail messages** — drag one or several inbox messages into the pill. Dragaway materializes them as `.eml`, extracts readable headers and body locally, and offers mail-specific actions such as Summarize, Tell Me What to Do, and Deadlines & Risks.
@@ -158,6 +176,8 @@ The entire flow happens in a floating black panel — no app switching, no typin
 ### File Support
 - PDF, DOCX, TXT, Markdown — full text extraction
 - PNG, JPEG, GIF, HEIC, WebP — image analysis via vision models
+- **Folders** — bounded local scan with an exact included/omitted/skipped manifest,
+  a contents preview, and one-request project/folder understanding
 - **Drag-out** — drag the file icon back out of the overlay to drop it anywhere in Finder
 
 ### AI Providers
@@ -224,7 +244,8 @@ open MacNotchAI.xcodeproj
 - **SwiftUI + AppKit hybrid** — `MenuBarExtra` for the menu bar icon, `NSPanel` (`OverlayWindow`) for the overlay, `NSHostingView` subclass (`DroppableHostingView`) for drag-and-drop reception
 - **Swift Concurrency** — `async/await` for AI calls and animation sequencing; `@MainActor` throughout
 - **Combine** — `@Published` stage changes flow through a Combine pipeline to resize the window
-- **No third-party dependencies** — pure Apple frameworks only
+- **Small, audited dependency surface** — Apple frameworks for the app itself, Sparkle for updates,
+  and a pinned Mozilla Readability script for local website-text extraction
 
 ### Key Engineering Decisions
 
@@ -251,7 +272,18 @@ During the 0.14 s dismiss fade, both the old and new `WaitingPillView` are live 
 - Oversized sources are truncated to ~12k chars and flagged in the result UI
 
 **Privacy model**
-Files are read only when the user explicitly taps an action chip. Nothing is uploaded speculatively. The only network calls are the AI API completions. API keys never leave the device except in those API calls.
+Ordinary local files are read only when the user explicitly taps an action chip. Website URL drops are
+the exception: Dragaway immediately fetches the target page locally so its text is ready; when static
+HTML is incomplete, a cookie-free ephemeral WebKit view may run the site's first-party rendering code.
+Folder drops are also prepared locally in the background: traversal and text extraction are bounded,
+never follow symlinks, and skip hidden/generated directories plus known key/secret files. The preview
+shows exactly which files entered the context and which were omitted or skipped. DOC/DOCX/RTF files
+remain available as direct drops, but recursive folder analysis lists and skips them because Apple's
+rich-text importer is synchronous and cannot be safely cancelled during background preparation. A
+single session scans at most four distinct folders; additional folders remain visible and are marked
+as omitted instead of starting unbounded concurrent recursive work.
+No document content is sent to an AI provider until the user starts an AI action. API keys never leave
+the device except in their provider requests.
 
 Accessibility is optional and off by default. When enabled, Dragaway uses event-posting access only to
 send one ⌘V after a Clipboard History selection; it does not inspect another app's UI or accessibility tree.

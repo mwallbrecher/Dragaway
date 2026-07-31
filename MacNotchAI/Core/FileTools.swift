@@ -1129,6 +1129,12 @@ enum FileTool: Identifiable, Hashable {
     /// Items valid for `url`, given the full session file list (for Stitch gating).
     static func tools(for url: URL, sessionFiles: [URL]) -> [FileTool] {
         var list: [FileTool] = [.reveal, .rename, .move]
+        // A folder is itself the session asset. File-level transforms and hashing a
+        // directory URL are meaningless. Folder ZIP via NSFileCoordinator is also
+        // intentionally withheld until it has a true off-main, cancellable path.
+        if FileInspector.isDirectory(url) {
+            return list
+        }
         let ext = url.pathExtension.lowercased()
         if ext == "pdf" {
             list.append(.pdfToText)
@@ -1187,7 +1193,7 @@ enum FileTool: Identifiable, Hashable {
             list.append(.transcribe)
             if ext != "m4a" && ext != "aac" { list.append(.convertToM4A) }
         }
-        // Universal: checksum + zip any file or folder.
+        // Universal for regular files. Folders returned above before SHA-256.
         list.append(.hashSHA256)
         list.append(.compress)
         return list

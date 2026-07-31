@@ -924,3 +924,162 @@
 - **Rule:** before every repository mutation run `git branch --show-current`,
   `git status --short --branch`, and `git worktree list`. Never restore, stash, stage, commit, move, or
   delete unexpected changes. In a shared dirty worktree, stage exact reviewed paths—never `git add .`.
+
+---
+
+## Website extraction
+
+### [WEB-01] Background preparation needs both file identity and session identity
+
+- **What was wrong:** a URL enrichment task was keyed only by its initial path, while the AI turn that
+  awaited it could outlive a close/reset. Same-second drops could also share that path.
+- **Why:** an async task can finish after a rename, move, or entirely new overlay session; path and UI
+  state are independent lifetimes.
+- **Fix:** materialize unique filenames, remap pending destinations with file utilities, and gate every
+  post-await provider/UI write plus deferred stage transition on a per-session revision.
+- **Rule:** file-scoped work follows the file; session-scoped work may write only while its captured
+  session revision is still current.
+
+### [WEB-02] A parser label is not evidence that extraction is complete
+
+- **What was wrong:** a short static Readability hit received a huge fixed score and could suppress or
+  beat a much richer rendered page; a nonempty “Loading…” main element could hide full body text.
+- **Why:** reader/semantic/body describe extraction strategies, not completeness, and SPA shells can
+  contain plausible prose before their real content arrives.
+- **Fix:** return all three DOM candidates, make strategy only a bounded tie-breaker, compare static and
+  rendered richness, and give dynamic pages a minimum settle window before extraction.
+- **Rule:** rank website candidates primarily by usable content, and use strategy only to break close
+  calls—never to outweigh thousands of characters.
+
+### [WEB-03] Invisible web views must explicitly fail closed on device permissions
+
+- **What was wrong:** omitting WebKit's media-capture delegate defaults to prompting, so a hidden page
+  could request camera or microphone access during content extraction.
+- **Why:** ephemeral storage and blocked media resources do not change WebKit's permission-delegate
+  default.
+- **Fix:** implement the media-capture permission callback and always return `.deny`; keep popups,
+  dialogs, downloads, authentication challenges, and extra navigations guarded as well.
+- **Rule:** every hidden renderer must deny interactive/device capabilities explicitly, not rely on
+  absent UI or nonpersistent storage.
+
+### [WEB-04] Session identity does not serialize concurrent provider turns
+
+- **What was wrong:** two fast actions in one session shared the same session revision and could append
+  deltas into one streaming bubble; navigating back after the first delta could also be overwritten.
+- **Why:** a session token distinguishes files/conversations, but not concurrent owners of mutable
+  request state such as the transcript, streaming message ID, or deferred result transition.
+- **Fix:** claim one active-turn token before optimistic UI writes, attach the provider Task for
+  cancellation, guard every delta/completion on both tokens, and keep the token until the deferred
+  stage write completes. Back/reset cancels it; Add-to-session waits for it.
+- **Rule:** shared streaming UI needs a single request owner in addition to session identity. Never
+  infer “only one request” from the current stage or from a loading indicator.
+
+---
+
+## Folder analysis
+
+### [FOLDER-01] Bound extraction separately from directory traversal
+
+- **What was wrong:** a 500-entry / 2-second directory scan still allowed every supported entry to
+  reach its extractor. Empty or corrupt documents consumed no character budget, so hundreds of large
+  failed reads could occur after the “bounded” scan had completed.
+- **Why:** metadata traversal, source bytes read, extraction attempts/time, and model-context
+  characters are independent resource axes. Bounding one does not constrain the others.
+- **Fix:** enforce per-file size gates plus cumulative source bytes, extraction-attempt and elapsed-time
+  ceilings; bound the enumerator's error-handler path as well as its normal entry loop; treat unknown
+  sizes as unreadable; mark every unprocessed supported file as omitted with a visible safety reason.
+- **Rule:** recursive ingestion needs explicit limits at every phase—enumeration, extraction, and final
+  request assembly—and the manifest must expose which limit excluded each item.
+
+### [FOLDER-02] Cancellation and budget ownership must reach the actual child work
+
+- **What was wrong:** cancelling an outer preparation Task did not cancel nested detached scans, and
+  per-item context caps ignored headers/separators and multiplied across multi-file sessions.
+- **Why:** unstructured Tasks have independent cancellation, while individually valid slices do not
+  imply a bounded aggregate.
+- **Fix:** wrap detached children in cancellation handlers, eliminate duplicate eager starts, account
+  for every framing character, and allocate one session-wide 24k/48k body budget. The local preview and
+  provider context now share the exact resulting manifest.
+- **Rule:** retain or structurally own every background child, and enforce limits at the same aggregate
+  boundary the provider receives—not merely at each component.
+
+### [FOLDER-03] Secret filtering is a fail-closed path policy, not an extension list
+
+- **What was wrong:** filtering `.env` and key extensions still allowed a visible `secrets/` directory
+  (or `production.env`) to be traversed and included.
+- **Why:** credentials are commonly identified by directory or basename conventions, and skipped
+  filenames themselves can reveal private project information if copied into the model tree.
+- **Fix:** reject sensitive roots/directories before descent, cover common credential basename
+  patterns and `*.env`, and redact every skipped path from the AI-facing tree while retaining it only
+  in the local preview.
+- **Rule:** recursive AI context must treat path metadata as data: fail closed on known secret
+  conventions, never descend, and do not upload the excluded path as a consolation prize.
+
+### [FOLDER-04] Preview claims and request assembly must share one immutable budget
+
+- **What was wrong:** multi-file folders were first prepared at the full context limit, then rescanned
+  with a smaller per-item allowance when the action ran; the preview could therefore claim more
+  included files than the provider received. Files could also be removed while that request was live.
+- **Why:** calculating budgets at two lifecycle points creates two different manifests, and mutating
+  session membership during a provider turn invalidates the request's ownership assumptions.
+- **Fix:** compute one deterministic session-wide split before showing coverage, reuse it during request
+  assembly, recalculate on add/remove/rename, and suppress removal while an AI turn owns the session.
+- **Rule:** any UI that says data is “included” must describe the exact immutable request snapshot—not
+  a best-case preview or a session that users can still mutate mid-flight.
+
+### [FOLDER-05] Recursive preparation may use only cancellable, budget-accounted extractors
+
+- **What was wrong:** Cocoa's DOC/DOCX/RTF importer runs synchronously on the main actor, so one
+  pathological document inside a dropped folder could freeze the chips UI and outlive the advertised
+  preparation timeout. A fixed-size coverage header could also overflow its reservation and silently
+  clip content that the manifest still called included.
+- **Why:** a file format supported for an explicit direct action is not automatically safe for eager
+  recursive ingestion, and character budgets are trustworthy only when every framing byte fits.
+- **Fix:** list but skip main-actor rich-text imports during folder analysis, bound full/compact headers
+  exactly, include scan completeness in provider context, fail closed to zero included files if the
+  final envelope invariant is ever violated, and withhold synchronous whole-folder compression until
+  it has a real async execution path.
+- **Rule:** recursive ingestion requires cancellable off-main readers and exact end-to-end accounting;
+  direct-drop support alone is not sufficient evidence that a format belongs in the folder allowlist.
+
+### [FOLDER-06] File extensions and per-folder limits do not bound a session
+
+- **What was wrong:** allowlisted text/code/data extensions could admit binary plists or mislabeled
+  bytes through the direct extractor's Latin-1 fallback, while a large batch could multiply otherwise
+  valid per-folder scan limits across dozens of concurrent folders.
+- **Why:** an extension is untrusted metadata, and a local limit is not a global resource bound when
+  the parent operation can create an unbounded number of children.
+- **Fix:** UTF-8/control-byte sniff every recursive plain-text candidate, reject binary plists, cap a
+  session at four distinct scanned folders, and mark later or context-starved folders as locally
+  visible omissions without traversing them.
+- **Rule:** fail closed on recursive content classification and enforce the resource ceiling at the
+  user action/session boundary, not only inside each worker.
+
+### [FOLDER-07] Folder selection must not own parsing or mutable filter membership
+
+- **What was wrong:** the first selectable preview put context-omitted and user-deselected files in the
+  same `Skipped` tab as terminal failures. Selecting one could change it to `Included`, remove it from
+  the active filter, and look like an immediate deselection. Every toggle also ran the extractor again.
+- **Why:** provider-envelope status is a mutable output, not a stable file capability, and parsing was
+  coupled to context assembly instead of to the folder session's one preparation phase.
+- **Fix:** classify tabs by immutable capability (`All` / `Supported` / `Skipped`), prepare each
+  supported file once under session-wide attempt/byte/time limits, retain only bounded extracted text
+  or a terminal outcome in memory, and rebuild selection manifests exclusively from that cache.
+- **Rule:** interactive inclusion is a cheap view over one bounded local preparation. Never use mutable
+  inclusion status as filter identity, and never reopen already prepared files merely because the user
+  changes which cached entries may enter the request.
+
+---
+
+## Model menu
+
+### [MODEL-MENU-01] Fixed hosted routes should not inherit BYOK catalogue depth
+
+- **What was wrong:** the first hierarchical menu placed Dragaway Free behind Provider → Family →
+  Model submenus even though its hosted routing is automatic and has no user-selectable final model.
+- **Why:** a uniform data structure was allowed to dictate the interaction hierarchy; it added clicks
+  without exposing a real choice and hid useful routing context behind redundant navigation.
+- **Fix:** keep Dragaway Free as one direct native menu item, expose its Flash-Lite / Flash / Pro
+  ladder through hover help, and reserve nested provider/family/model menus for configurable routes.
+- **Rule:** menu depth must represent an actual decision. Fixed or automatically routed choices stay
+  flat, with explanatory metadata available on demand.

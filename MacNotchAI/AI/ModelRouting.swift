@@ -103,7 +103,7 @@ extension AIAction {
             return RoutingPlan(tier: .strong, taskClass: .vision, maxOutputTokens: 4096)
 
         // ── Explanation: flash is plenty capable → capable model ──────────────
-        case .explainCode:
+        case .explainCode, .understandFolder:
             return RoutingPlan(tier: .strong, taskClass: .explanation, maxOutputTokens: 1024)
         case .writeTests:
             return RoutingPlan(tier: .strong, taskClass: .explanation, maxOutputTokens: 1536)

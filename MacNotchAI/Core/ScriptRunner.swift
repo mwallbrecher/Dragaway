@@ -9,7 +9,11 @@ enum ScriptRunner {
 
     @MainActor
     static func run(_ script: Script, fileURL: URL) {
-        let fileDir = fileURL.deletingLastPathComponent()
+        // For a dropped project folder, {dir}, git-root lookup, and the process cwd
+        // should all start inside that folder — not in its parent directory.
+        let fileDir = FileInspector.isDirectory(fileURL)
+            ? fileURL
+            : fileURL.deletingLastPathComponent()
         let cwd = (script.useGitRoot ? gitRoot(from: fileDir) : nil) ?? fileDir
         let command = expand(script.command, file: fileURL, fileDir: fileDir, cwd: cwd)
         guard !command.trimmingCharacters(in: .whitespaces).isEmpty else { return }

@@ -360,6 +360,10 @@ struct AIModelChoice: Identifiable, Equatable {
         "\(model) — \(provider)" + (isUnavailable ? " (Unavailable)" : "")
     }
 
+    var leafMenuTitle: String {
+        model + (isUnavailable ? " (Unavailable)" : "")
+    }
+
     static func byokID(for type: AIProviderType, modelID: String) -> String {
         // Treated as an opaque Picker tag; callers resolve it through the concrete
         // `AIModelChoice`, so Ollama colons and Groq slashes never need parsing.
@@ -376,6 +380,179 @@ struct AIModelChoice: Identifiable, Equatable {
         }
         let modelID = AIModelCatalogStore.shared.selectedModelID(for: type)
         return byokID(for: type, modelID: modelID)
+    }
+}
+
+/// Presentation-only hierarchy for the compact header menu. Provider resolution still
+/// consumes the exact `AIModelChoice.id`; these groups never rewrite or interpret an ID
+/// on the request path.
+struct AIModelFamilyGroup: Identifiable, Equatable {
+    let name: String
+    let choices: [AIModelChoice]
+
+    var id: String { name }
+}
+
+struct AIModelProviderGroup: Identifiable, Equatable {
+    let id: String
+    let name: String
+    let families: [AIModelFamilyGroup]
+}
+
+/// Preserve provider/catalogue order while folding exact models into a navigable native
+/// menu hierarchy. Families are deliberately derived from stable provider IDs rather than
+/// a hard-coded release list, so newly discovered minor generations group automatically.
+func groupedAIModelChoices(_ choices: [AIModelChoice]) -> [AIModelProviderGroup] {
+    var providerOrder: [String] = []
+    var providerNames: [String: String] = [:]
+    var providerChoices: [String: [AIModelChoice]] = [:]
+
+    for choice in choices {
+        let providerID = choice.providerType?.storageKey ?? "hosted:\(choice.provider)"
+        if providerChoices[providerID] == nil {
+            providerOrder.append(providerID)
+            providerNames[providerID] = choice.provider
+        }
+        providerChoices[providerID, default: []].append(choice)
+    }
+
+    return providerOrder.compactMap { providerID in
+        guard let choices = providerChoices[providerID],
+              let providerName = providerNames[providerID]
+        else { return nil }
+
+        var familyOrder: [String] = []
+        var familyChoices: [String: [AIModelChoice]] = [:]
+        for choice in choices {
+            let family = AIModelFamilyLabel.family(for: choice)
+            if familyChoices[family] == nil { familyOrder.append(family) }
+            familyChoices[family, default: []].append(choice)
+        }
+
+        let families = familyOrder.compactMap { family -> AIModelFamilyGroup? in
+            guard let choices = familyChoices[family] else { return nil }
+            return AIModelFamilyGroup(name: family, choices: choices)
+        }
+        return AIModelProviderGroup(id: providerID, name: providerName, families: families)
+    }
+}
+
+private enum AIModelFamilyLabel {
+    static func family(for choice: AIModelChoice) -> String {
+        guard let type = choice.providerType else { return "Gemini 2.5" }
+
+        let identifier = (choice.modelID ?? choice.model).lowercased()
+        switch type {
+        case .openai:
+            if identifier.contains("gpt-oss") { return "GPT-OSS" }
+            if let version = version(after: "gpt", in: identifier) {
+                return "GPT-\(version)"
+            }
+            if let version = reasoningVersion(in: identifier) {
+                return version
+            }
+            if identifier.contains("latest") || choice.model.localizedCaseInsensitiveContains("alias") {
+                return "Aliases"
+            }
+            return "Other OpenAI"
+
+        case .anthropic:
+            if let version = firstNumericVersion(in: identifier, after: "claude") {
+                return "Claude \(version)"
+            }
+            return "Claude"
+
+        case .gemini:
+            if let version = version(after: "gemini", in: identifier) {
+                return "Gemini \(version)"
+            }
+            if let version = version(after: "gemma", in: identifier) {
+                return "Gemma \(version)"
+            }
+            return identifier.contains("gemma") ? "Gemma" : "Gemini"
+
+        case .groq, .ollama:
+            return openModelFamily(identifier: identifier, fallback: choice.model)
+        }
+    }
+
+    private static func openModelFamily(identifier: String, fallback: String) -> String {
+        if identifier.contains("gpt-oss") { return "GPT-OSS" }
+        if let version = version(after: "llama", in: identifier) {
+            return "Llama \(version)"
+        }
+        if let version = version(after: "qwen", in: identifier) {
+            return "Qwen \(version)"
+        }
+        if let version = version(after: "gemma", in: identifier) {
+            return "Gemma \(version)"
+        }
+        if let version = version(after: "phi", in: identifier) {
+            return "Phi \(version)"
+        }
+        if identifier.contains("deepseek-r1") { return "DeepSeek R1" }
+        if identifier.contains("deepseek-v3") { return "DeepSeek V3" }
+        if identifier.contains("deepseek") { return "DeepSeek" }
+        if identifier.contains("mixtral") { return "Mixtral" }
+        if identifier.contains("mistral") { return "Mistral" }
+        if identifier.contains("compound") { return "Groq Compound" }
+
+        let finalComponent = identifier.split(separator: "/").last.map(String.init) ?? identifier
+        let root = finalComponent.split(whereSeparator: { "-_:.".contains($0) }).first.map(String.init)
+        return root?.replacingOccurrences(of: "_", with: " ").capitalized
+            ?? fallback
+    }
+
+    /// Match the first generation immediately following a model-family token:
+    /// `gpt-5.4-mini` → `5.4`, `gpt-4o` → `4o`, `llama-3.3` → `3.3`.
+    private static func version(after family: String, in identifier: String) -> String? {
+        let escaped = NSRegularExpression.escapedPattern(for: family)
+        return capture(
+            pattern: #"(?:^|[/_-])\#(escaped)[-_]?([0-9]+(?:[._-][0-9]+)?[a-z]?)"#,
+            in: identifier
+        )?.replacingOccurrences(of: "_", with: ".")
+          .replacingOccurrences(of: "-", with: ".")
+    }
+
+    /// Claude IDs place the size name before or after the generation. Reading the first
+    /// one- or two-part numeric run after `claude` handles both `claude-3-5-sonnet` and
+    /// `claude-sonnet-4-5-…` without mistaking the trailing release date for a family.
+    private static func firstNumericVersion(in identifier: String, after family: String) -> String? {
+        guard let range = identifier.range(of: family) else { return nil }
+        let suffix = identifier[range.upperBound...]
+        let tokens = suffix.split { !$0.isLetter && !$0.isNumber }
+        for index in tokens.indices {
+            guard tokens[index].allSatisfy(\.isNumber),
+                  tokens[index].count <= 2
+            else { continue }
+
+            var result = String(tokens[index])
+            let next = tokens.index(after: index)
+            if next < tokens.endIndex,
+               tokens[next].allSatisfy(\.isNumber),
+               tokens[next].count <= 2 {
+                result += ".\(tokens[next])"
+            }
+            return result
+        }
+        return nil
+    }
+
+    private static func reasoningVersion(in identifier: String) -> String? {
+        capture(pattern: #"(?:^|/)o([0-9]+)(?:[-_.]|$)"#, in: identifier)
+            .map { "o\($0)" }
+    }
+
+    private static func capture(pattern: String, in value: String) -> String? {
+        guard let expression = try? NSRegularExpression(pattern: pattern),
+              let match = expression.firstMatch(
+                in: value,
+                range: NSRange(value.startIndex..., in: value)
+              ),
+              match.numberOfRanges > 1,
+              let range = Range(match.range(at: 1), in: value)
+        else { return nil }
+        return String(value[range])
     }
 }
 

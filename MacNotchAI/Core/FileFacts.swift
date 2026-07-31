@@ -18,13 +18,16 @@ enum FileFacts {
         var pageCount: Int?         // PDF
         var duration: String?       // "2:34" (audio/video)
         var itemCount: Int?         // folder: number of direct children
+        var isSizePartial: Bool     // bounded folder walk stopped before full size
 
         /// Human file size, e.g. "1.2 MB".
-        var sizeText: String { FileFacts.byteText(sizeBytes) }
+        var sizeText: String {
+            (isSizePartial ? "≥ " : "") + FileFacts.byteText(sizeBytes)
+        }
     }
 
     /// Gather facts for `url`. Safe to call off the main actor.
-    nonisolated static func gather(_ url: URL) async -> Facts {
+    @concurrent nonisolated static func gather(_ url: URL) async -> Facts {
         let fm = FileManager.default
         var isDir: ObjCBool = false
         let exists = fm.fileExists(atPath: url.path, isDirectory: &isDir)
@@ -36,9 +39,10 @@ enum FileFacts {
 
         var size: Int64 = 0
         var items: Int? = nil
+        var sizePartial = false
         if directory {
-            let (s, n) = folderSizeAndCount(url)
-            size = s; items = n
+            let (s, n, partial) = folderSizeAndCount(url)
+            size = s; items = n; sizePartial = partial
         } else {
             size = Int64((try? url.resourceValues(forKeys: [.fileSizeKey]))?.fileSize ?? 0)
         }
@@ -59,7 +63,8 @@ enum FileFacts {
 
         return Facts(name: url.lastPathComponent, isDirectory: directory,
                      sizeBytes: size, kind: kind, dimensions: dimensions,
-                     pageCount: pages, duration: duration, itemCount: items)
+                     pageCount: pages, duration: duration, itemCount: items,
+                     isSizePartial: sizePartial)
     }
 
     // MARK: - Formatting
@@ -85,20 +90,51 @@ enum FileFacts {
 
     // MARK: - Probes (all nonisolated; run off-main)
 
-    private nonisolated static func folderSizeAndCount(_ url: URL) -> (Int64, Int) {
+    private nonisolated static func folderSizeAndCount(_ url: URL) -> (Int64, Int, Bool) {
         let fm = FileManager.default
         var total: Int64 = 0
-        var count = 0
-        if let shallow = try? fm.contentsOfDirectory(at: url, includingPropertiesForKeys: nil) {
-            count = shallow.count
+        var directChildren = 0
+        var visited = 0
+        var partial = false
+        var hadTraversalError = false
+        let started = Date()
+        let maxEntries = 10_000
+        let maxSeconds: TimeInterval = 1.0
+        let root = url.standardizedFileURL
+        let keys: [URLResourceKey] = [
+            .fileSizeKey, .isRegularFileKey, .isDirectoryKey, .isSymbolicLinkKey
+        ]
+        guard let enumerator = fm.enumerator(
+            at: root,
+            includingPropertiesForKeys: keys,
+            options: [.skipsPackageDescendants],
+            errorHandler: { _, _ in
+                hadTraversalError = true
+                return true
+            }
+        ) else {
+            return (0, 0, true)
         }
-        if let en = fm.enumerator(at: url, includingPropertiesForKeys: [.fileSizeKey, .isRegularFileKey]) {
-            for case let f as URL in en {
-                let v = try? f.resourceValues(forKeys: [.fileSizeKey, .isRegularFileKey])
-                if v?.isRegularFile == true { total += Int64(v?.fileSize ?? 0) }
+        while let file = enumerator.nextObject() as? URL {
+            if Task.isCancelled || visited >= maxEntries
+                || Date().timeIntervalSince(started) >= maxSeconds {
+                partial = true
+                break
+            }
+            visited += 1
+            if file.deletingLastPathComponent().standardizedFileURL == root {
+                directChildren += 1
+            }
+            let values = try? file.resourceValues(forKeys: Set(keys))
+            if values?.isSymbolicLink == true {
+                if values?.isDirectory == true { enumerator.skipDescendants() }
+                continue
+            }
+            if values?.isRegularFile == true {
+                total += Int64(values?.fileSize ?? 0)
             }
         }
-        return (total, count)
+        return (total, directChildren, partial || hadTraversalError)
     }
 
     private nonisolated static func imageDimensions(_ url: URL) -> String? {

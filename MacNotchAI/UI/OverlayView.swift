@@ -400,6 +400,7 @@ private struct ChipsColumnView: View {
                     ))
 
                 chipsTabContent
+                    .disabled(vm.isAITurnActive)
                     .transition(.asymmetric(
                         insertion: .opacity.combined(with: .move(edge: .top))
                                            .animation(.spring(response: 0.28, dampingFraction: 0.7).delay(0.15)),
@@ -418,6 +419,7 @@ private struct ChipsColumnView: View {
             // model can never be invoked for it (zero operator token cost).
             if !isMediaSession {
                 PromptField(text: $vm.customPrompt, onSubmit: runCustomPrompt)
+                    .disabled(vm.isAITurnActive)
             }
 
         }
@@ -1132,6 +1134,7 @@ private struct TwoColumnView: View {
                     ) { runAction(action) }
                 }
             }
+            .disabled(vm.isAITurnActive)
 
             Spacer(minLength: 0)
 
@@ -1166,7 +1169,11 @@ private struct TwoColumnView: View {
                 HStack(spacing: 5 * scale) {
                     Image(systemName: "scissors")
                         .font(.system(size: 9 * scale, weight: .semibold))
-                    Text("Large file — analysed the first part only.")
+                    Text(!vm.additionalFileURLs.isEmpty
+                         ? "Session coverage was limited to the shared context budget."
+                         : FileInspector.isDirectory(fileURL)
+                            ? "Folder coverage was limited — open its preview for details."
+                            : "Large file — analysed the first part only.")
                         .font(.system(size: 10 * scale, weight: .medium))
                 }
                 .foregroundColor(.white.opacity(0.45))
@@ -1174,6 +1181,7 @@ private struct TwoColumnView: View {
             }
 
             PromptField(text: $vm.customPrompt, onSubmit: runCustomPrompt)
+                .disabled(vm.isAITurnActive)
 
             if case .result = vm.stage {
                 // ── Follow-up header + collapse toggle ───────────────────────
@@ -1209,6 +1217,7 @@ private struct TwoColumnView: View {
                             }
                         }
                     }
+                    .disabled(vm.isAITurnActive)
                     .transition(.asymmetric(
                         // Delay so chips pop in after the ScrollView has shrunk
                         // to its capped height and the layout has stabilised.
@@ -1402,6 +1411,7 @@ private struct FileResultView: View {
     /// Output-vs-original size delta ("73% smaller"), once both facts are loaded.
     private var deltaText: String? {
         guard let o = outFacts, let s = origFacts else { return nil }
+        guard !o.isSizePartial, !s.isSizePartial else { return nil }
         return FileFacts.deltaText(output: o.sizeBytes, original: s.sizeBytes)
     }
 
@@ -1567,7 +1577,9 @@ private struct ExpandedFilePill: View {
         if let d = f.dimensions { rows.append(("Dimensions", d)) }
         if let p = f.pageCount  { rows.append(("Pages", p.formatted())) }
         if let d = f.duration   { rows.append(("Duration", d)) }
-        if let n = f.itemCount  { rows.append(("Items", n.formatted())) }
+        if let n = f.itemCount  {
+            rows.append(("Items", (f.isSizePartial ? "≥ " : "") + n.formatted()))
+        }
         return rows
     }
 }
@@ -1689,17 +1701,40 @@ private struct FileHeaderView: View {
                     .layoutPriority(1)
 
                 Menu {
-                    if modelChoices.isEmpty {
+                    if hostedChoice == nil, modelGroups.isEmpty {
                         Button("No configured models") {}
                             .disabled(true)
                     } else {
-                        Picker("", selection: modelSelection) {
-                            ForEach(modelChoices) { choice in
-                                Text(choice.menuTitle).tag(choice.id)
+                        if let hostedChoice {
+                            Picker("", selection: modelSelection) {
+                                Text("Dragaway Free")
+                                    .help("Automatically uses Gemini 2.5 Flash-Lite, Flash, and Pro.")
+                                    .tag(hostedChoice.id)
+                            }
+                            .labelsHidden()
+                            .pickerStyle(.inline)
+                            .help("Automatically uses Gemini 2.5 Flash-Lite, Flash, and Pro.")
+
+                            if !modelGroups.isEmpty {
+                                Divider()
                             }
                         }
-                        .labelsHidden()
-                        .pickerStyle(.inline)
+
+                        ForEach(modelGroups) { provider in
+                            Menu(provider.name) {
+                                ForEach(provider.families) { family in
+                                    Menu(family.name) {
+                                        Picker("", selection: modelSelection) {
+                                            ForEach(family.choices) { choice in
+                                                Text(choice.leafMenuTitle).tag(choice.id)
+                                            }
+                                        }
+                                        .labelsHidden()
+                                        .pickerStyle(.inline)
+                                    }
+                                }
+                            }
+                        }
                     }
 
                     Divider()
@@ -1714,9 +1749,9 @@ private struct FileHeaderView: View {
                             .truncationMode(.tail)
                             .minimumScaleFactor(0.75)
                         Image(systemName: "chevron.down")
-                            .font(.system(size: 6 * scale, weight: .bold))
+                            .font(.system(size: 4 * scale, weight: .bold))
                     }
-                    .font(.system(size: 7 * scale, weight: .medium))
+                    .font(.system(size: 4.5 * scale, weight: .medium))
                     .foregroundColor(.white.opacity(0.40))
                 }
                 .menuStyle(.borderlessButton)
@@ -1831,6 +1866,14 @@ private struct FileHeaderView: View {
         )
     }
 
+    private var modelGroups: [AIModelProviderGroup] {
+        groupedAIModelChoices(modelChoices.filter { $0.id != AIModelChoice.hostedID })
+    }
+
+    private var hostedChoice: AIModelChoice? {
+        modelChoices.first { $0.id == AIModelChoice.hostedID }
+    }
+
     private var modelSelection: Binding<String> {
         Binding(
             get: {
@@ -1942,29 +1985,35 @@ private struct FilePillsRow: View {
     /// - Primary file: promotes the first additional to primary, keeping the rest.
     private func removeAction(for url: URL) -> () -> Void {
         {
-            withAnimation(.spring(response: 0.28, dampingFraction: 0.72)) {
-                if url == primaryURL {
-                    // Promote first additional to primary
-                    guard let newPrimary = vm.additionalFileURLs.first else { return }
-                    let remaining = Array(vm.additionalFileURLs.dropFirst())
-                    let allNew = [newPrimary] + remaining
+            guard !vm.isAITurnActive else { return }
+            let remainingSessionURLs: [URL]
+            if url == primaryURL {
+                // Promote first additional to primary
+                guard let newPrimary = vm.additionalFileURLs.first else { return }
+                let remaining = Array(vm.additionalFileURLs.dropFirst())
+                remainingSessionURLs = [newPrimary] + remaining
+                withAnimation(.spring(response: 0.28, dampingFraction: 0.72)) {
                     vm.stage = .chips(
                         url: newPrimary,
-                        actions: FileInspector.suggestedActions(forAll: allNew)
+                        actions: FileInspector.suggestedActions(forAll: remainingSessionURLs)
                     )
                     vm.additionalFileURLs = remaining
-                } else {
+                }
+            } else {
+                let remaining = vm.additionalFileURLs.filter { $0 != url }
+                remainingSessionURLs = [primaryURL] + remaining
+                withAnimation(.spring(response: 0.28, dampingFraction: 0.72)) {
                     vm.additionalFileURLs.removeAll { $0 == url }
                     // Recalculate chip actions with updated file list
                     if case .chips(let primary, _) = vm.stage {
-                        let allNew = [primary] + vm.additionalFileURLs
                         vm.stage = .chips(
                             url: primary,
-                            actions: FileInspector.suggestedActions(forAll: allNew)
+                            actions: FileInspector.suggestedActions(forAll: remainingSessionURLs)
                         )
                     }
                 }
             }
+            FolderAnalysisStore.shared.beginSession(with: remainingSessionURLs)
         }
     }
 
@@ -1996,10 +2045,31 @@ private struct FilePillsRow: View {
 private struct SingleFilePill: View {
     let fileURL: URL
     @ObservedObject private var vm = OverlayViewModel.shared
+    @ObservedObject private var folderStore = FolderAnalysisStore.shared
     @Environment(\.uiScale) private var scale
 
     @State private var fileIcon: NSImage = NSImage(named: NSImage.multipleDocumentsName) ?? NSImage()
     @State private var isHovering = false
+    @State private var isShowingFolderContents = false
+
+    private var isFolder: Bool { FileInspector.isDirectory(fileURL) }
+
+    private var subtitle: String {
+        guard isFolder else { return "Click to preview · drag to move" }
+        switch folderStore.snapshot(for: fileURL) {
+        case .idle, .scanning:
+            return "Scanning folder…"
+        case .failed:
+            return "Could not inspect · click for details"
+        case .ready(let analysis):
+            let manifest = analysis.manifest
+            var parts = ["\(manifest.includedCount) included in AI"]
+            if manifest.omittedCount > 0 { parts.append("\(manifest.omittedCount) omitted") }
+            if manifest.skippedCount > 0 { parts.append("\(manifest.skippedCount) skipped") }
+            if manifest.wasLimited { parts.append("scan limited") }
+            return parts.joined(separator: " · ")
+        }
+    }
 
     var body: some View {
         HStack(spacing: 8 * scale) {
@@ -2018,7 +2088,7 @@ private struct SingleFilePill: View {
                         .foregroundColor(.white)
                         .lineLimit(1)
                         .truncationMode(.middle)
-                    Text("Click to preview · drag to move")
+                    Text(subtitle)
                         .font(.system(size: 9 * scale, weight: .regular))
                         .foregroundColor(.white.opacity(0.35))
                         .lineLimit(1)
@@ -2026,7 +2096,16 @@ private struct SingleFilePill: View {
                 .fixedSize(horizontal: false, vertical: true)
             }
             .contentShape(Rectangle())
-            .onTapGesture { QuickLookController.shared.present(urls: vm.sessionFileURLs, current: 0) }
+            .onTapGesture {
+                if isFolder {
+                    isShowingFolderContents = true
+                } else {
+                    QuickLookController.shared.present(urls: vm.sessionFileURLs, current: 0)
+                }
+            }
+            .popover(isPresented: $isShowingFolderContents) {
+                FolderContentsPopover(rootURL: fileURL)
+            }
 
             Spacer(minLength: 8 * scale)
 
@@ -2084,6 +2163,7 @@ private struct SingleFilePill: View {
         }
         .onAppear {
             FileThumbnail.load(for: fileURL, size: 24) { fileIcon = $0 }
+            if isFolder { folderStore.prepare(fileURL) }
         }
     }
 }
@@ -2098,10 +2178,14 @@ private struct FilePill: View {
     /// when it is the only remaining file, though that case uses SingleFilePill).
     let onRemove: (() -> Void)?
     @ObservedObject private var vm = OverlayViewModel.shared
+    @ObservedObject private var folderStore = FolderAnalysisStore.shared
     @Environment(\.uiScale) private var scale
 
     @State private var fileIcon: NSImage = NSImage(named: NSImage.multipleDocumentsName) ?? NSImage()
     @State private var isHovering = false
+    @State private var isShowingFolderContents = false
+
+    private var isFolder: Bool { FileInspector.isDirectory(fileURL) }
 
     var body: some View {
         Image(nsImage: fileIcon)
@@ -2130,7 +2214,7 @@ private struct FilePill: View {
             }
             // × remove badge — top-trailing corner, visible on hover
             .overlay(alignment: .topTrailing) {
-                if isHovering, let onRemove {
+                if isHovering, !vm.isAITurnActive, let onRemove {
                     Button(action: onRemove) {
                         Image(systemName: "xmark")
                             .font(.system(size: 6 * scale, weight: .bold))
@@ -2152,9 +2236,18 @@ private struct FilePill: View {
             // Bare click → Quick Look this file (the carousel's other files stay
             // reachable via the panel's ◀ ▶). Drag still moves the file out.
             .onTapGesture {
-                let urls = vm.sessionFileURLs
-                QuickLookController.shared.present(urls: urls,
-                                                   current: urls.firstIndex(of: fileURL) ?? 0)
+                if isFolder {
+                    isShowingFolderContents = true
+                } else {
+                    let urls = vm.sessionFileURLs
+                    QuickLookController.shared.present(
+                        urls: urls,
+                        current: urls.firstIndex(of: fileURL) ?? 0
+                    )
+                }
+            }
+            .popover(isPresented: $isShowingFolderContents) {
+                FolderContentsPopover(rootURL: fileURL)
             }
             .onHover { isHovering = $0 }
             .animation(.easeInOut(duration: 0.12), value: isHovering)
@@ -2198,6 +2291,7 @@ private struct FilePill: View {
             .onAppear {
                 Task { @MainActor in
                     fileIcon = FilePresentation.icon(for: fileURL)
+                    if isFolder { folderStore.prepare(fileURL) }
                 }
             }
     }
@@ -2553,12 +2647,20 @@ struct ActionChip: View {
 /// per-view setStage(): never mutate `stage` inside an active layout pass. Entering
 /// .result collapses follow-ups so the section starts closed.
 @MainActor
-private func applyStage(_ stage: OverlayViewModel.Stage) {
+private func applyStage(
+    _ stage: OverlayViewModel.Stage,
+    ifSession sessionRevision: UUID,
+    turnID: UUID,
+    completesTurn: Bool = false
+) {
     DispatchQueue.main.async {
-        if case .result = stage { OverlayViewModel.shared.isFollowupsExpanded = false }
+        let vm = OverlayViewModel.shared
+        guard vm.isCurrentAITurn(turnID, sessionRevision: sessionRevision) else { return }
+        if case .result = stage { vm.isFollowupsExpanded = false }
         withAnimation(.spring(response: 0.32, dampingFraction: 1.0)) {
-            OverlayViewModel.shared.stage = stage
+            vm.stage = stage
         }
+        if completesTurn { vm.completeAITurn(turnID) }
     }
 }
 
@@ -2576,6 +2678,8 @@ private func sendTurn(provider: any AIProvider,
                       forceTier: AITier? = nil,
                       regenerate: Bool = false) {
     let vm = OverlayViewModel.shared
+    guard let turnID = vm.beginAITurn() else { return }
+    let sessionRevision = vm.sessionRevision
 
     // What the user's bubble shows vs. what the model receives as this turn's text.
     let display     = typedPrompt ?? action.rawValue
@@ -2606,7 +2710,11 @@ private func sendTurn(provider: any AIProvider,
     if showsTranscript {
         vm.isAwaitingReply = true            // thinking row appears beneath transcript
     } else {
-        applyStage(.loading(url: fileURL, action: action))
+        applyStage(
+            .loading(url: fileURL, action: action),
+            ifSession: sessionRevision,
+            turnID: turnID
+        )
     }
 
     let additionalURLs = vm.additionalFileURLs
@@ -2620,7 +2728,7 @@ private func sendTurn(provider: any AIProvider,
     // and is why "Dragaway Free" requests were still hitting the stored BYOK key (flash).
     let liveProvider = resolveProvider()
 
-    Task {
+    let turnTask = Task {
         do {
             // Extract the document ONCE per session; reuse for every turn.
             let base: OverlayViewModel.BaseContext
@@ -2635,17 +2743,19 @@ private func sendTurn(provider: any AIProvider,
                 for: [fileURL] + additionalURLs,
                 charLimit: charLimit
             ) {
-                // A Mail drop started this extraction as soon as its chips appeared.
-                // If the user clicked first, awaiting the shared task queues this turn
-                // locally; the provider is not contacted until complete content exists.
+                // A background-prepared drop started this extraction as soon as its
+                // chips appeared. If the user clicked first, awaiting the shared task
+                // queues this turn locally; the provider is not contacted until the
+                // complete staged content exists.
                 base = prepared
-                vm.baseContext = prepared
             } else {
                 let (content, imageURL, truncated) = try await buildMultiFileContent(
                     primary: fileURL, additional: additionalURLs, charLimit: charLimit)
                 base = .init(content: content, imageURL: imageURL, truncated: truncated)
-                vm.baseContext = base
             }
+
+            guard vm.isCurrentAITurn(turnID, sessionRevision: sessionRevision) else { return }
+            vm.baseContext = base
 
             let turns = buildChatTurns(conversation: vm.conversation,
                                        baseContent: base.content,
@@ -2660,9 +2770,11 @@ private func sendTurn(provider: any AIProvider,
             let text = try await liveProvider.replyStream(
                 messages: turns, imageURL: base.imageURL, plan: plan
             ) { delta in
+                guard vm.isCurrentAITurn(turnID, sessionRevision: sessionRevision) else { return }
                 vm.appendStreamDelta(delta, url: fileURL, action: action)
             }
 
+            guard vm.isCurrentAITurn(turnID, sessionRevision: sessionRevision) else { return }
             vm.contentTruncated = base.truncated
             vm.isAwaitingReply  = false
             // Swap the streamed bubble for the definitive text; if the provider
@@ -2676,8 +2788,14 @@ private func sendTurn(provider: any AIProvider,
                     primary: fileURL, additional: additionalURLs,
                     action: action, prompt: typedPrompt, result: text)
             }
-            applyStage(.result(url: fileURL, action: action, text: text))
+            applyStage(
+                .result(url: fileURL, action: action, text: text),
+                ifSession: sessionRevision,
+                turnID: turnID,
+                completesTurn: true
+            )
         } catch {
+            guard vm.isCurrentAITurn(turnID, sessionRevision: sessionRevision) else { return }
             vm.abortStreamedReply()   // keep any partial text; stop tracking the bubble
             vm.isAwaitingReply = false
             let msg = error.localizedDescription
@@ -2685,14 +2803,25 @@ private func sendTurn(provider: any AIProvider,
                 // Keep the transcript — surface the failure as an assistant note.
                 let note = "⚠️ \(msg)"
                 vm.conversation.append(.init(role: .assistant, display: note, modelText: note))
-                applyStage(.result(url: fileURL, action: action, text: note))
+                applyStage(
+                    .result(url: fileURL, action: action, text: note),
+                    ifSession: sessionRevision,
+                    turnID: turnID,
+                    completesTurn: true
+                )
             } else {
                 // Nothing on screen yet — show the error stage (drops the lone bubble).
                 vm.conversation.removeAll()
-                applyStage(.error(url: fileURL, message: msg))
+                applyStage(
+                    .error(url: fileURL, message: msg),
+                    ifSession: sessionRevision,
+                    turnID: turnID,
+                    completesTurn: true
+                )
             }
         }
     }
+    vm.attachAITurnTask(turnTask, id: turnID)
 }
 
 /// Serialise the transcript into provider ChatTurns. A leading system turn sets the
@@ -2744,6 +2873,24 @@ func buildMultiFileContent(
 ) async throws -> (content: String, imageURL: URL?, truncated: Bool) {
     let allURLs = [fileURL] + additionalURLs
 
+    // Web URLs are materialized immediately as tiny TXT placeholders so the pill never
+    // waits on network/rendering. Before any extractor reads those files, await only the
+    // matching file-scoped preparations. No entry means an immediate no-op (native TXT,
+    // image, PDF, Mail, etc. stay on their existing paths).
+    await WebDropPreparation.waitForPending(files: allURLs)
+
+    // ── Single folder ─────────────────────────────────────────────────────────
+    // The stage is already visible while FolderAnalysisStore prepares this exact
+    // bounded manifest in the background. A fast first action simply awaits the
+    // same task; no second traversal and no extra provider request.
+    if allURLs.count == 1, FileInspector.isDirectory(allURLs[0]) {
+        let analysis = try await FolderAnalysisStore.shared.analysis(
+            for: allURLs[0],
+            characterLimit: charLimit
+        )
+        return (analysis.content, nil, analysis.truncated)
+    }
+
     // ── Single image (no additionals) ─────────────────────────────────────────
     if allURLs.count == 1, FileInspector.isImageFile(allURLs[0]) {
         return ("Analyse the attached image.", allURLs[0], false)
@@ -2760,27 +2907,74 @@ func buildMultiFileContent(
         return (result.text, nil, result.truncated)
     }
 
-    // ── Multiple files ────────────────────────────────────────────────────────
+    // ── Multiple files — one SESSION-wide context budget ─────────────────────
+    // Reserve every filename header and separator first, then use the same fixed,
+    // deterministic split that eager folder preparation received. A short file may
+    // leave some room unused, but the preview and provider coverage stay identical.
+    let headers = allURLs.map { SessionContextBudget.header(for: $0) }
+    let framingCharacters = SessionContextBudget.framingCharacterCount(for: allURLs)
+    let bodyLimits = SessionContextBudget.bodyLimits(
+        for: allURLs,
+        characterLimit: charLimit
+    )
+    if framingCharacters >= charLimit {
+        // Keep folder-preview coverage honest even in the pathological case where
+        // filenames alone exhaust the request.
+        for url in allURLs where FileInspector.isDirectory(url) {
+            _ = try? await FolderAnalysisStore.shared.analysis(
+                for: url,
+                characterLimit: 0
+            )
+        }
+        let namesOnly = headers.joined(separator: "\n\n")
+        return (String(namesOnly.prefix(charLimit)), nil, true)
+    }
+
     var sections: [String] = []
     var anyTruncated = false
-    for url in allURLs {
-        let body: String
-        if FileInspector.isMediaFile(url) {
+    for (index, url) in allURLs.enumerated() {
+        let bodyLimit = bodyLimits[index]
+        let fullBody: String
+        if FileInspector.isDirectory(url) {
+            do {
+                let analysis = try await FolderAnalysisStore.shared.analysis(
+                    for: url,
+                    characterLimit: bodyLimit
+                )
+                fullBody = analysis.content
+                anyTruncated = anyTruncated || analysis.truncated
+            } catch {
+                fullBody = "[Could not inspect this folder]"
+                anyTruncated = true
+            }
+        } else if FileInspector.isMediaFile(url) {
             // Never feed raw audio/video to the model — name it and move on.
-            body = "[Media: \(url.lastPathComponent) — audio/video is not analysed]"
+            fullBody = "[Media: \(url.lastPathComponent) — audio/video is not analysed]"
         } else if FileInspector.isImageFile(url) {
             // Vision analysis is only available for single-image sessions;
             // in multi-file mode describe the image by name / context.
-            body = "[Image: \(url.lastPathComponent) — visual description not available in multi-file mode]"
-        } else if let result = try? await FileContentExtractor.extract(from: url, limit: charLimit) {
-            body = result.text
+            fullBody = "[Image: \(url.lastPathComponent) — visual description not available in multi-file mode]"
+        } else if bodyLimit <= 0 {
+            fullBody = ""
+            anyTruncated = true
+        } else if let result = try? await FileContentExtractor.extract(from: url, limit: bodyLimit) {
+            fullBody = result.text
             anyTruncated = anyTruncated || result.truncated
         } else {
-            body = "[Could not read: \(url.lastPathComponent)]"
+            fullBody = "[Could not read this file]"
+            anyTruncated = true
         }
-        sections.append("=== \(url.lastPathComponent) ===\n\(body)")
+
+        let body = String(fullBody.prefix(bodyLimit))
+        if fullBody.count > bodyLimit { anyTruncated = true }
+        sections.append(headers[index] + body)
     }
-    return (sections.joined(separator: "\n\n"), nil, anyTruncated)
+    let joined = sections.joined(separator: "\n\n")
+    if joined.count > charLimit {
+        // Defensive backstop; framing/body accounting above should make this unreachable.
+        return (String(joined.prefix(charLimit)), nil, true)
+    }
+    return (joined, nil, anyTruncated)
 }
 
 // MARK: - Second-file drag overlay
@@ -2896,7 +3090,11 @@ private struct SecondFilePromptBanner: View {
                             .clipShape(Capsule(style: .continuous))
                     }
                     .buttonStyle(.plain)
-                    .help("Analyse all files together in the current session")
+                    .disabled(vm.isAITurnActive)
+                    .opacity(vm.isAITurnActive ? 0.45 : 1)
+                    .help(vm.isAITurnActive
+                        ? "Wait for the current AI reply, or start a new session"
+                        : "Analyse all files together in the current session")
 
                     // New session
                     Button { startNewSession(urls: urls) } label: {
@@ -2951,6 +3149,7 @@ private struct SecondFilePromptBanner: View {
                 )
             }
         }
+        FolderAnalysisStore.shared.beginSession(with: vm.sessionFileURLs)
     }
 
     private func startNewSession(urls: [URL]) {

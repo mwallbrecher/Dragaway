@@ -8,25 +8,28 @@ struct FileContentExtractor {
     /// document tasks) and keeps the client under the Worker's per-request ceiling.
     /// When the source exceeds the active cap, `extract` flags `truncated` so the UI
     /// can tell the user only the first part was analysed. **Free / BYOK tier.**
-    static let maxChars = 24_000
+    nonisolated static let maxChars = 24_000
 
     /// Pro / subscriber char cap — double the free cap. Longer documents are analysed
     /// in full, at proportionally higher input cost. The active cap is chosen at the
     /// call site from the entitlement (see `buildMultiFileContent`) and matched by the
     /// Worker's server-verified Pro ceiling (`MAX_CONTENT_CHARS_PRO`).
-    static let maxCharsPro = 48_000
+    nonisolated static let maxCharsPro = 48_000
 
     /// Result of an extraction. `truncated` is true when the source was larger
     /// than the active char cap (or, for PDFs, longer than the 20-page cap) and the
     /// text returned is only the leading slice.
-    struct Result {
+    struct Result: Sendable {
         let text: String
         let truncated: Bool
     }
 
     /// - Parameter limit: char cap to apply (defaults to the free-tier `maxChars`;
     ///   callers pass `maxCharsPro` for entitled users).
-    static func extract(from url: URL, limit: Int = FileContentExtractor.maxChars) async throws -> Result {
+    nonisolated static func extract(
+        from url: URL,
+        limit: Int = FileContentExtractor.maxChars
+    ) async throws -> Result {
         // Under Hardened Runtime, URLs received via drag-and-drop from Finder
         // arrive as security-scoped URLs. startAccessingSecurityScopedResource()
         // is required to read them; for plain path URLs it is a harmless no-op.
@@ -73,7 +76,7 @@ struct FileContentExtractor {
 
     // MARK: - Format readers
 
-    private static func extractPDF(from url: URL, limit: Int) throws -> Result {
+    private nonisolated static func extractPDF(from url: URL, limit: Int) throws -> Result {
         // Security scope is already active from the caller (extract).
         guard let pdf = PDFDocument(url: url) else {
             throw ExtractionError.cannotOpenPDF
@@ -117,7 +120,7 @@ struct FileContentExtractor {
     /// Reads a text file, detecting the encoding instead of assuming UTF-8.
     /// Falls back through auto-detection → Latin-1 → lossy UTF-8 so non-UTF-8
     /// files (latin-1, etc.) no longer throw.
-    private static func readText(from url: URL) throws -> String {
+    private nonisolated static func readText(from url: URL) throws -> String {
         if let s = try? String(contentsOf: url, encoding: .utf8) { return s }
 
         var used: String.Encoding = .utf8
@@ -132,7 +135,7 @@ struct FileContentExtractor {
 
     // MARK: - Helpers
 
-    private static func capped(_ text: String, limit: Int) -> Result {
+    private nonisolated static func capped(_ text: String, limit: Int) -> Result {
         if text.count > limit {
             return Result(text: String(text.prefix(limit)), truncated: true)
         }

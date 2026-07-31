@@ -2,12 +2,19 @@ import Foundation
 import NaturalLanguage
 
 struct FileInspector {
+    /// True for a filesystem directory. Kept separate from extension-based type
+    /// classification because dropped folders have no meaningful path extension.
+    nonisolated static func isDirectory(_ url: URL) -> Bool {
+        (try? url.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory == true
+    }
+
     /// Content-aware suggestions: start from the fixed extension map, then reorder/filter using
     /// cheap LOCAL signals (`FileSignals.peek` — bounded text peek, no network/LLM). Falls back to
     /// the plain `baseActions` list when there's nothing to read (media/unsupported, or peek fails).
     static func suggestedActions(for url: URL) -> [AIAction] {
         let base = baseActions(for: url)
         guard !base.isEmpty else { return base }
+        guard !isDirectory(url) else { return base }
         return reorder(base, using: cachedPeek(url), isProse: isProseFile(url), primary: url)
     }
 
@@ -32,6 +39,9 @@ struct FileInspector {
 
     /// The fixed extension → action mapping (no content inspection).
     static func baseActions(for url: URL) -> [AIAction] {
+        if isDirectory(url) {
+            return [.understandFolder, .summariseBullets, .extractKeyPoints, .extractTodos]
+        }
         let ext = url.pathExtension.lowercased()
 
         // Each list is a CANDIDATE POOL (broadly-useful first). `reorder` promotes by
@@ -83,7 +93,16 @@ struct FileInspector {
         guard let primary = urls.first else { return [] }
         let union = baseActions(forAll: urls)
         guard !union.isEmpty else { return union }
-        return reorder(union, using: cachedPeek(primary), isProse: isProseFile(primary), primary: primary)
+        guard !isDirectory(primary) else { return Array(union.prefix(6)) }
+        let reordered = reorder(
+            union,
+            using: cachedPeek(primary),
+            isProse: isProseFile(primary),
+            primary: primary
+        )
+        guard urls.contains(where: isDirectory) else { return reordered }
+        return [.understandFolder]
+            + Array(reordered.filter { $0 != .understandFolder }.prefix(5))
     }
 
     /// The instant (no-peek) union of base actions across `urls`, preserving first-URL
@@ -97,7 +116,16 @@ struct FileInspector {
                 union.append(action)
             }
         }
-        return union
+        if urls.contains(where: isDirectory),
+           let index = union.firstIndex(of: .understandFolder), index != 0 {
+            union.remove(at: index)
+            union.insert(.understandFolder, at: 0)
+        }
+        // Folder sessions intentionally skip the async content peek, so this is the
+        // final visible list for their first frame. Preserve the fixed ≤6-row contract.
+        return urls.contains(where: isDirectory)
+            ? Array(union.prefix(6))
+            : union
     }
 
     /// Off-main-safe content peek (no cache touch — the cache is main-actor only).
@@ -253,6 +281,7 @@ struct FileInspector {
     /// NOTE: video/audio are NOT unsupported — they have no AI actions but ARE droppable
     /// (Open-in + file utilities), so they are exempted here and land in the chips stage.
     static func isUnsupportedFileType(_ url: URL) -> Bool {
+        if isDirectory(url) { return false }
         if isMediaFile(url) { return false }
         return baseActions(for: url).isEmpty   // emptiness only — skip the content peek
     }

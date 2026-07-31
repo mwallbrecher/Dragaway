@@ -2,6 +2,7 @@ import Foundation
 
 enum AIAction: String, CaseIterable, Identifiable {
     // Document actions
+    case understandFolder   = "What Does This Folder Do?"
     case summariseBullets   = "Summarise into Bullets"
     case summariseShort     = "Summarise in 1 Sentence"
     case extractKeyDates    = "Extract Key Dates"
@@ -64,6 +65,7 @@ enum AIAction: String, CaseIterable, Identifiable {
     /// picked from symbols available on the macOS 14 deployment target.
     var icon: String {
         switch self {
+        case .understandFolder:     return "folder"
         case .summariseBullets:     return "list.bullet"
         case .summariseShort:       return "text.alignleft"
         case .extractKeyDates:      return "calendar"
@@ -109,6 +111,14 @@ enum AIAction: String, CaseIterable, Identifiable {
 
     var systemPrompt: String {
         switch self {
+        case .understandFolder:
+            return """
+            Explain what this folder appears to do. Describe its purpose, structure, important files, \
+            likely entry points, dependencies, and how the included parts relate. Start with a concise \
+            overview, then use clear Markdown sections. The supplied folder context contains an explicit \
+            coverage summary: distinguish files whose contents were included from omitted or skipped \
+            files, qualify uncertain conclusions, and never imply that excluded content was analysed.
+            """
         case .summariseBullets:
             return "Summarise the following content into concise bullet points. Be brief and extract only the most important information."
         case .summariseShort:

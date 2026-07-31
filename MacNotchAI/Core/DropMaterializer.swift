@@ -110,22 +110,29 @@ enum DropMaterializer {
         do {
             switch payload {
             case .image(let png):
-                let url = dir.appendingPathComponent("Dropped Image \(stamp).png")
+                let url = uniqueDropURL(
+                    dir.appendingPathComponent("Dropped Image \(stamp).png")
+                )
                 try png.write(to: url)
                 prune(dir)
                 return url
             case .webURL(let link):
                 let name = (link.host ?? "Link").replacingOccurrences(of: "www.", with: "")
-                let url = dir.appendingPathComponent("\(sanitize(name)) \(stamp).txt")
+                let url = uniqueDropURL(
+                    dir.appendingPathComponent("\(sanitize(name)) \(stamp).txt")
+                )
                 try link.absoluteString.data(using: .utf8)?.write(to: url)
                 FilePresentation.markAsWebDrop(url)
                 prune(dir)
-                // The drop stays instant; the page content arrives in the background
-                // so "summarise this website" works on the next AI turn.
-                enrichWebDrop(file: url, link: link)
+                // The drop stays instant. The file-scoped task upgrades this URL-only
+                // placeholder in the background; a fast AI action awaits that exact
+                // task at the shared content-builder choke point.
+                WebDropPreparation.start(file: url, link: link)
                 return url
             case .text(let text):
-                let url = dir.appendingPathComponent("\(titleWords(text)) \(stamp).txt")
+                let url = uniqueDropURL(
+                    dir.appendingPathComponent("\(titleWords(text)) \(stamp).txt")
+                )
                 try text.data(using: .utf8)?.write(to: url)
                 prune(dir)
                 return url
@@ -133,84 +140,6 @@ enum DropMaterializer {
         } catch {
             return nil
         }
-    }
-
-    // MARK: - Web-page enrichment
-
-    /// Upgrade a dropped link in the background: fetch the page (bounded), strip it to
-    /// readable text, rewrite the materialized file, and invalidate the session's
-    /// cached extraction so the NEXT AI turn reads the real page — this is what makes
-    /// "summarise this website" actually work on a URL / Safari-tab drop.
-    /// Failures leave the URL-only file in place (the drop never breaks).
-    private static func enrichWebDrop(file: URL, link: URL) {
-        Task.detached(priority: .userInitiated) {
-            guard let page = await fetchReadableText(from: link) else { return }
-            let content = """
-            \(page.title ?? link.absoluteString)
-            URL: \(link.absoluteString)
-
-            \(page.text)
-            """
-            await MainActor.run {
-                guard (try? content.write(to: file, atomically: true, encoding: .utf8)) != nil
-                else { return }
-                // Atomic replacement may create a fresh inode and discard xattrs.
-                // Reattach the presentation-only origin marker after every rewrite.
-                FilePresentation.markAsWebDrop(file)
-                // If this file is the live session, drop the cached extraction so the
-                // next turn re-reads the enriched content.
-                let vm = OverlayViewModel.shared
-                if vm.sessionFileURLs.contains(where: { $0.path == file.path }) {
-                    vm.baseContext = nil
-                }
-            }
-        }
-    }
-
-    /// Bounded fetch + crude readability pass (regex, fully off-main — no WebKit).
-    /// Good enough as summarisation source text; not a rendering engine.
-    private nonisolated static func fetchReadableText(from link: URL)
-        async -> (title: String?, text: String)? {
-        var req = URLRequest(url: link, timeoutInterval: 12)
-        req.setValue("Mozilla/5.0 (Macintosh; Intel Mac OS X) Dragaway/1.1",
-                     forHTTPHeaderField: "User-Agent")
-        guard let (data, resp) = try? await URLSession.shared.data(for: req),
-              (resp as? HTTPURLResponse).map({ (200..<300).contains($0.statusCode) }) ?? true,
-              !data.isEmpty else { return nil }
-
-        let capped = data.prefix(3_000_000)
-        guard var html = String(data: capped, encoding: .utf8)
-                ?? String(data: capped, encoding: .isoLatin1) else { return nil }
-
-        var title: String?
-        if let r = html.range(of: "<title[^>]*>([\\s\\S]*?)</title>",
-                              options: [.regularExpression, .caseInsensitive]) {
-            title = String(html[r])
-                .replacingOccurrences(of: "<[^>]+>", with: "", options: .regularExpression)
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-        }
-
-        // Drop non-content blocks, convert structural tags to line breaks, strip the rest.
-        for block in ["script", "style", "noscript", "svg", "head", "nav", "footer"] {
-            html = html.replacingOccurrences(
-                of: "<\(block)[\\s\\S]*?</\(block)>", with: " ",
-                options: [.regularExpression, .caseInsensitive])
-        }
-        html = html.replacingOccurrences(of: "<br[^>]*>|</p>|</div>|</h[1-6]>|</li>|</tr>",
-                                         with: "\n",
-                                         options: [.regularExpression, .caseInsensitive])
-        html = html.replacingOccurrences(of: "<[^>]+>", with: " ", options: .regularExpression)
-        for (k, v) in ["&amp;": "&", "&lt;": "<", "&gt;": ">", "&quot;": "\"",
-                       "&#39;": "'", "&nbsp;": " "] {
-            html = html.replacingOccurrences(of: k, with: v)
-        }
-        html = html.replacingOccurrences(of: "[ \\t]+", with: " ", options: .regularExpression)
-        html = html.replacingOccurrences(of: "\\n[ ]*", with: "\n", options: .regularExpression)
-        html = html.replacingOccurrences(of: "\\n{3,}", with: "\n\n", options: .regularExpression)
-
-        let text = html.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard text.count > 80 else { return nil }        // nothing useful extracted
-        return (title, String(text.prefix(40_000)))
     }
 
     // MARK: - Internals
@@ -294,6 +223,27 @@ enum DropMaterializer {
         let f = DateFormatter()
         f.dateFormat = "yyMMdd-HHmmss"
         return f.string(from: Date())
+    }
+
+    /// A multi-item browser drag can materialize several payloads within the same
+    /// timestamp second. Never let one placeholder overwrite another before its
+    /// file-scoped web preparation has even started.
+    private static func uniqueDropURL(_ candidate: URL) -> URL {
+        let fm = FileManager.default
+        guard fm.fileExists(atPath: candidate.path) else { return candidate }
+
+        let directory = candidate.deletingLastPathComponent()
+        let ext = candidate.pathExtension
+        let stem = candidate.deletingPathExtension().lastPathComponent
+        var suffix = 2
+        while true {
+            let filename = ext.isEmpty
+                ? "\(stem) \(suffix)"
+                : "\(stem) \(suffix).\(ext)"
+            let proposed = directory.appendingPathComponent(filename)
+            if !fm.fileExists(atPath: proposed.path) { return proposed }
+            suffix += 1
+        }
     }
 
     /// Keep the newest 50 drops so the folder can't grow forever.

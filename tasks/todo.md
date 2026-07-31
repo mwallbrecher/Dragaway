@@ -2254,3 +2254,160 @@ direct OpenAI, Anthropic, Gemini, Groq, and Ollama calls never silently replace 
 - [x] Commit the reviewed v1.1.4 source on `main`, tag `v1.1.4`, and push `main` plus the tag.
 - [x] Publish the GitHub release with the notarized DMG and concise user-facing notes.
 - [x] Commit and push the generated signed `appcast.xml`, then verify the public release asset and feed.
+
+## Reliable website-content extraction (DONE 2026-07-22)
+
+**Scope:** improve the text generated for Safari/browser URL drops on `main` without changing drag
+detection, pasteboard routing, web-drop presentation, or the instant pill/chips transition. No paid
+API and no Accessibility permission.
+
+- [x] **Bounded static reader pass** — fetch the document once with `URLSession`, reject non-HTML and
+      cap oversized responses, construct a DOM without loading remote resources, and extract structured
+      article text plus title/metadata instead of stripping every HTML tag with regex.
+- [x] **Rendered-page fallback** — when the static result is too thin, use an invisible, ephemeral
+      `WKWebView` with navigation/popup guards, blocked images/media/fonts, a DOM-settle window, and a
+      hard timeout. Prefer reader content; fall back to a cleaned `innerText` snapshot.
+- [x] **Queue the first action safely** — keep the pill immediate, but let a chip tapped during web
+      preparation await the same session/file-specific task before `FileContentExtractor` reads the
+      generated TXT. Preserve multi-file sessions, stale-session rejection, URL-only fallback, and the
+      existing mail-preparation path.
+- [x] **Verify the implementation pipeline** — run `git diff --check`, Debug + Release builds, and focused local
+      extraction smoke cases for a static article, a JavaScript-rendered article, a sparse/non-article
+      page, a failed/slow URL, concurrent preparation, and rename while preparing. Static routing audit
+      confirms browser-image, Mail, and native-TXT paths remain isolated; final physical drag smoke is
+      left to the owner because the repository has no UI-test target.
+
+## Folder drops and bounded folder understanding (PLANNED 2026-07-24)
+
+**Scope:** make Finder folders first-class product drops on `main`. Keep the existing drag detector,
+Safari/image/Mail routing, stage machine, and fixed window-size contract unchanged. Scan locally and
+show exactly which children can enter AI context; perform only one normal provider request per action.
+
+- [x] **One canonical bounded manifest** — add an off-main `FolderScanner` that recursively records
+      relative paths and classifies every inspected entry as `included`, `eligibleButOmitted`, or
+      `skipped(reason)`. Never follow symlinks or descend into packages, hidden/generated directories,
+      dependency caches, or known secret/key files. Apply hard limits for depth, entry count, file size,
+      elapsed scan time, and cancellation. Preview and parser must consume this same manifest.
+- [x] **Explicit AI-content support** — do not reuse `isUnsupportedFileType` as the folder criterion:
+      it intentionally treats media as droppable and gives unknown extensions generic actions. Define
+      a strict bounded allowlist (PDF, Mail, text/code/data plus safely sniffed extensionless text).
+      Keep DOC/DOCX/RTF supported as direct drops but visibly skip them during recursive preparation,
+      because Cocoa's synchronous main-thread importer cannot be cancelled safely. Mark
+      images/media/archives/installers/unknown binary and extraction failures visibly with a reason
+      instead of decoding them as text.
+- [x] **Instant session + shared preparation** — keep the folder URL itself as the session asset so
+      Share, drag-out, Open-in, history, and local folder utilities continue to work. Show chips
+      immediately, start one cancellable folder preparation in the background, and let a fast first AI
+      action await that exact task before any provider is contacted. Re-scan on a restored session.
+      Cap each session at four distinct recursive folder scans; keep later folders visible with an
+      explicit local/provider omission marker instead of multiplying resource limits without bound.
+- [x] **Trustworthy folder preview** — keep the existing full-width file pill and fixed chips geometry.
+      Its subtitle shows `Scanning…` and then included/omitted/skipped counts. Clicking a folder opens
+      a separate scrollable `FolderContentsPopover` with relative paths, text labels and symbols for
+      each status, explicit skip reasons, scan-limit notices, filters, and per-file Quick Look. Do not
+      add an inline tree or a new stage that changes `ChipsLayout` / `sizeForStage`.
+- [x] **Single-call folder context** — build a deterministic context containing the bounded folder tree,
+      coverage summary, and path-labelled extracted text. For small folders include every eligible file;
+      for large folders enforce one global 24k/48k character budget and prioritise README/docs, project
+      manifests, entry points, then representative small files. Surface exact coverage; never imply that
+      omitted files were analysed. Add a folder-specific `What does this folder do?` action while keeping
+      the custom prompt path available.
+- [x] **Folder-safe surrounding features** — hide inapplicable file utilities such as SHA-256-on-folder,
+      and withhold synchronous whole-folder ZIP until it has a true async path; use the folder itself
+      as a script working directory, preserve multi-file/add-to-session semantics, and ensure no folder
+      child is silently promoted into `sessionFileURLs` or session history.
+- [ ] **Verification gate** — fixture-test nested supported/unsupported files, secret/hidden paths,
+      symlink loops, packages, unreadable/oversized files, empty and huge folders, cancellation, restored
+      sessions, global budget/coverage accounting, and a single provider invocation. Then run diff check,
+      Debug + Release builds, and manually smoke Finder folder drop, preview, freeform
+      `What does this folder do?`, Safari tab, browser image, Mail, and ordinary multi-file drops.
+      Automated portion passed: real-extractor fixtures cover nested text/project files, exact sensitive
+      roots/directories, `*.env`, hidden/generated/package paths, skipped-path redaction, symlink loops,
+      empty/oversized/500-entry folders, the 64-attempt safety ceiling, and global context accounting.
+      `git diff --check` plus Debug and Release builds pass. Physical drag/UI regression smoke remains
+      manual because the repository has no UI-test target and another Xcode-launched Dragaway instance
+      is currently running.
+
+**Deliberate first-version boundary:** images, media, and rich-text/Office documents appear in the
+manifest but their contents are not sent as part of a folder request. Local Vision OCR, a cancellable
+Office parser, and an explicit multi-call deep-analysis mode can be added later; none should silently
+add latency, UI stalls, or provider cost to the default folder drop.
+
+## Hierarchical header model menu (DONE 2026-07-25)
+
+**Scope:** keep the existing native macOS header menu and exact model-selection routing, but make a
+large live catalogue navigable as Provider → model family/generation → exact model. Reduce only the
+compact model label in the pill header; do not restyle native menu rows.
+
+- [x] Add stable, presentation-only provider/family groups derived from the existing enabled model
+      choices, including current and future OpenAI, Claude, Gemini/Gemma, Llama, Qwen, DeepSeek,
+      Mistral, Groq-hosted, and Ollama identifiers.
+- [x] Replace the flat inline picker with nested native `Menu` submenus and a leaf `Picker`, preserving
+      the exact selected-model checkmark, unavailable state, Hosted choice, and Provider Settings.
+- [x] Make the trigger label visibly smaller, then run diff checks and Debug/Release builds without
+      touching the model catalogue, provider resolution, or the in-progress folder-drop behavior.
+
+## Finder-style folder content selection (IN PROGRESS 2026-07-28)
+
+**Scope:** let users decide which supported children of a dropped folder may enter the next AI
+request, directly inside the existing folder popover. Preserve the canonical manifest, bounded
+single-call context, unsupported-file visibility, fixed overlay geometry, and all non-folder drops.
+
+- [x] Keep the scanned source manifest separately from the prepared result and maintain one
+      session-local selection set per folder. Default to every supported file so existing folder
+      behavior is unchanged.
+- [x] Rebuild only the bounded folder context after a selection change (never rescan), cancel stale
+      rebuilds, and make a concurrently started AI action await the newest selection-specific result.
+      Redact deselected child paths as well as their contents from provider context.
+- [x] Add Finder-style interaction to the native popover: click for a single selection/deselection,
+      Command- or Control-click for additive toggles, Shift-click for a contiguous range, Command-A
+      for every supported file, and Space for Quick Look of the current selected file(s).
+- [x] Clearly distinguish selected, context-omitted, deselected, and unsupported rows without making
+      unsupported entries selectable; keep every dimension scaled with `uiScale`.
+- [ ] Verify focused selection/context fixtures, `git diff --check`, and Debug + Release builds; then
+      manually smoke the popover modifiers, Command-A, Space, and immediate action-after-selection.
+      Automated checks pass: a real-extractor smoke fixture verified selected content inclusion,
+      deselected content/path redaction, and immediate analysis awaiting the newest debounced rebuild;
+      `git diff --check` plus Debug and Release builds pass. Physical modifier/Quick Look interaction
+      remains for the owner because the active Xcode-launched Dragaway process predates this build and
+      the repository has no UI-test target.
+
+### Selection correction: stable filters and one-time preparation (COMPLETE 2026-07-28)
+
+- [x] Make the preview tabs capability-based (`All` / `Supported` / `Skipped`) rather than derived
+      from mutable selection/context outcomes. A supported row must remain in the active tab while it
+      is toggled; terminal extraction failures and safety-limit omissions stay visible but unselectable.
+- [x] Split bounded folder preparation from context assembly: extract each supported file at most once
+      per session under the existing 64-file / 64-MiB / four-second safety limits, then retain only its
+      bounded local text or terminal preparation result in a session-local cache.
+- [x] On selection changes, rebuild manifest statuses and the provider envelope entirely from that
+      immutable cache. Do no filesystem reads, keep the selected row in the active tab, and make an
+      immediately started AI action await the newest assembly.
+- [x] Add regression coverage for tab membership, reselect without extractor work, deselected
+      path/content redaction, context-limit changes, cancellation, and session reset; then run
+      `git diff --check` plus Debug and Release builds.
+
+Verification: focused cache/store smoke harnesses passed using the production folder-analysis code.
+They deleted the source files after initial preparation, then deselected/reselected files and changed
+the context limit successfully, proving those interactions used cached text instead of reopening the
+files. Immediate `analysis(for:)` returned the newest selection, deselected paths/content stayed
+redacted, and `cancelAll()` cleared the cache. `git diff --check`, Debug, and Release builds passed.
+
+## Release v1.1.5 (PLANNED 2026-07-31)
+
+**Scope:** ship the accumulated live-product work on `main` since v1.1.4. Keep `thesis` untouched.
+The user-facing scope is reliable website-content extraction, bounded folder drops with selectable
+contents, the hierarchical native model menu, and the associated async/session reliability fixes.
+
+- [x] Audit every tracked and untracked release path, exclude build artefacts or unrelated work, and
+      derive truthful v1.1.5 release notes from the complete `v1.1.4..main` plus working-tree delta.
+- [x] Bump the app and extension to marketing version 1.1.5 / build 8; update the README headline and
+      add `RELEASE_NOTES_v1.1.5.md`.
+- [x] Run `git diff --check`, focused web/folder regressions, and clean Debug + Release builds. Review
+      the exact staged diff before committing only the intended product and release files.
+- [ ] Commit and push the reviewed v1.1.5 source on `main`, create and push annotated tag `v1.1.5`,
+      then build, Developer-ID sign, notarize, staple, and validate `Dragaway-1.1.5.dmg`.
+- [ ] Confirm the current Sparkle entry has an EdDSA signature, publish the GitHub release with the
+      notarized DMG, then commit/push `appcast.xml` last so installed clients never see a missing asset.
+- [ ] Verify the public release asset, notarization/Gatekeeper state, version/build metadata, GitHub
+      release, and live appcast URL/signature after publication.
