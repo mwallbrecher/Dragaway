@@ -2393,7 +2393,7 @@ the context limit successfully, proving those interactions used cached text inst
 files. Immediate `analysis(for:)` returned the newest selection, deselected paths/content stayed
 redacted, and `cancelAll()` cleared the cache. `git diff --check`, Debug, and Release builds passed.
 
-## Release v1.1.5 (IN PROGRESS 2026-07-31)
+## Release v1.1.5 (DONE 2026-07-31)
 
 **Scope:** ship the accumulated live-product work on `main` since v1.1.4. Keep `thesis` untouched.
 The user-facing scope is reliable website-content extraction, bounded folder drops with selectable
@@ -2413,5 +2413,11 @@ contents, the hierarchical native model menu, and the associated async/session r
       Gatekeeper, mounted-app, and remote-download hash checks before publication.
 - [x] Confirm the current Sparkle entry has an EdDSA signature, publish the GitHub release with the
       notarized DMG, then commit/push `appcast.xml` last so installed clients never see a missing asset.
-- [ ] Verify the public release asset, notarization/Gatekeeper state, version/build metadata, GitHub
+- [x] Verify the public release asset, notarization/Gatekeeper state, version/build metadata, GitHub
       release, and live appcast URL/signature after publication.
+
+Verification: clean Debug and Release builds passed; app and extension report `1.1.5 (8)` and bundle
+Readability plus its licence. The final 4,550,142-byte DMG is Developer-ID signed, accepted by Apple
+under notary submission `875a1232-8a29-4946-bcd1-9d7d62ec0414`, stapled, and accepted by Gatekeeper.
+GitHub serves the exact local SHA-256 `b976bd6563c3a7f4e77443dc28c40730f5df39163c255b05607d4a802adf1fc6`;
+the public `main` appcast exposes build 8 with the matching length and EdDSA signature.
