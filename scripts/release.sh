@@ -27,6 +27,7 @@ SCHEME="MacNotchAI"
 APP_NAME="MacNotchAI"
 NOTARY_PROFILE="${NOTARY_PROFILE:-AIDrop-Notary}"
 SPARKLE_ACCOUNT="${SPARKLE_ACCOUNT:-ed25519}"
+DEVELOPER_IDENTITY="${DEVELOPER_IDENTITY:-Developer ID Application: Moritz Wallbrecher (ASN2KAJ266)}"
 
 BUILD_DIR="$REPO_ROOT/build"
 ARCHIVE="$BUILD_DIR/$APP_NAME.xcarchive"
@@ -88,19 +89,23 @@ hdiutil create -volname "Dragaway" \
   -srcfolder "$STAGE_DIR" -ov -format UDZO "$DMG" >/dev/null
 echo "  created: $DMG"
 
+echo "▸ 4/7  Signing disk image…"
+codesign --force --timestamp --sign "$DEVELOPER_IDENTITY" "$DMG"
+codesign --verify --verbose=2 "$DMG"
+
 if [[ "${SKIP_NOTARIZE:-0}" == "1" ]]; then
-  echo "▸ 4/4  Skipping notarization (SKIP_NOTARIZE=1)."
+  echo "▸ 5/5  Skipping notarization (SKIP_NOTARIZE=1)."
   echo
   echo "✓ Done (NOT notarized): $DMG"
   echo "  Users must run:  xattr -cr <path-to-dmg>   before opening (Gatekeeper)."
   exit 0
 fi
 
-echo "▸ 4/5  Notarizing (this can take a few minutes)…"
+echo "▸ 5/7  Notarizing (this can take a few minutes)…"
 xcrun notarytool submit "$DMG" \
   --keychain-profile "$NOTARY_PROFILE" --wait
 
-echo "▸ 5/6  Stapling…"
+echo "▸ 6/7  Stapling…"
 xcrun stapler staple "$DMG"
 xcrun stapler validate "$DMG"
 
@@ -108,7 +113,7 @@ xcrun stapler validate "$DMG"
 # Signs the notarized DMG with the EdDSA private key (in your login Keychain, from
 # `generate_keys` — see SPARKLE_SETUP.md) and (re)generates appcast.xml. The DMG is
 # hosted as a GitHub Release asset, so the enclosure URL points there.
-echo "▸ 6/6  Sparkle appcast…"
+echo "▸ 7/7  Sparkle appcast…"
 GEN_APPCAST="${SPARKLE_BIN:-}"
 if [[ -z "$GEN_APPCAST" ]]; then
   GEN_APPCAST="$(/usr/bin/find ~/Library/Developer/Xcode/DerivedData \

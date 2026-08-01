@@ -299,6 +299,18 @@
 - **Rule**: for Sparkle, verify the built/exported `.app/Contents/Info.plist`, not only Xcode build
   settings. `generate_appcast` signs only when the update bundle advertises `SUPublicEDKey`.
 
+### [RELEASE-02] A notarization ticket and staple do not prove the DMG container is signed
+- **What was wrong:** the release helper exported a correctly Developer-ID-signed app, wrapped it in
+  an unsigned DMG, and submitted that DMG to Apple. Notarytool returned `Accepted` and stapler validated
+  the ticket, but `spctl` still reported `source=no usable signature` for the disk image itself.
+- **Why:** Apple can notarize the signed code nested inside an archive and staple its ticket without
+  creating a code signature for the outer disk-image container. `hdiutil create` does not sign a DMG.
+- **Fix:** run `codesign --timestamp --sign "Developer ID Application: …"` on the completed DMG before
+  notary submission, verify that signature, then notarize, staple, and regenerate the Sparkle signature
+  because every change to the DMG changes its bytes.
+- **Rule:** release verification has three separate gates: `codesign` the DMG, notarize/staple the DMG,
+  and verify the app inside it. Passing any one of those does not imply the other two passed.
+
 ### [BUILD-01] INFOPLIST_KEY_* must be added to project.pbxproj with exact tab indentation
 - **Mistake**: Used space indentation in Edit tool when the file uses tabs → string not found
 - **Fix**: Use Python script with exact `\t` characters to insert keys

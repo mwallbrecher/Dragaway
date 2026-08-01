@@ -2393,7 +2393,7 @@ the context limit successfully, proving those interactions used cached text inst
 files. Immediate `analysis(for:)` returned the newest selection, deselected paths/content stayed
 redacted, and `cancelAll()` cleared the cache. `git diff --check`, Debug, and Release builds passed.
 
-## Release v1.1.5 (PLANNED 2026-07-31)
+## Release v1.1.5 (IN PROGRESS 2026-07-31)
 
 **Scope:** ship the accumulated live-product work on `main` since v1.1.4. Keep `thesis` untouched.
 The user-facing scope is reliable website-content extraction, bounded folder drops with selectable
@@ -2405,9 +2405,13 @@ contents, the hierarchical native model menu, and the associated async/session r
       add `RELEASE_NOTES_v1.1.5.md`.
 - [x] Run `git diff --check`, focused web/folder regressions, and clean Debug + Release builds. Review
       the exact staged diff before committing only the intended product and release files.
-- [ ] Commit and push the reviewed v1.1.5 source on `main`, create and push annotated tag `v1.1.5`,
+- [x] Commit and push the reviewed v1.1.5 source on `main`, create and push annotated tag `v1.1.5`,
       then build, Developer-ID sign, notarize, staple, and validate `Dragaway-1.1.5.dmg`.
-- [ ] Confirm the current Sparkle entry has an EdDSA signature, publish the GitHub release with the
+      Release-gate correction: the first accepted/stapled DMG contained a notarized Developer-ID app
+      but the disk-image container itself had no usable code signature. The release helper now signs
+      the DMG before submission; the corrected rebuild passed code-signing, notarization, stapling,
+      Gatekeeper, mounted-app, and remote-download hash checks before publication.
+- [x] Confirm the current Sparkle entry has an EdDSA signature, publish the GitHub release with the
       notarized DMG, then commit/push `appcast.xml` last so installed clients never see a missing asset.
 - [ ] Verify the public release asset, notarization/Gatekeeper state, version/build metadata, GitHub
       release, and live appcast URL/signature after publication.
