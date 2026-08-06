@@ -5,8 +5,9 @@ the thesis contribution stays cleanly attributable and gradable, separate from t
 released app. See `docs/GIT_WORKFLOW.md` for the rules that keep it that way.
 
 - **Author:** Moritz Wallbrecher
-- **Only thesis branch:** `thesis` (built on top of the released Dragaway `main` branch)
-- **Draft PR:** _(link added when opened: `thesis` → `main`)_
+- **Only thesis branch:** `thesis` (built on top of the released Dragaway `main` branch; branched at v1.1.3)
+- **Draft PR:** https://github.com/mwallbrecher/Dragaway/pull/1 (`thesis` → `main`, keep as draft until done)
+- **Status:** active — thesis work has started.
 - **Every thesis commit carries the trailer** `Thesis-Component: <name>` so it can be extracted
   mechanically at any time:
   ```bash
@@ -18,13 +19,20 @@ released app. See `docs/GIT_WORKFLOW.md` for the rules that keep it that way.
 
 ## Thesis features / components
 
-The thesis comprises **several larger components**, but all of them are developed on the single
-`thesis` branch. Do not create `thesis/*` component branches. The live Thesis branch carries the
-detailed contribution map; this Main copy is the baseline template.
+The thesis builds the **Computational Intent Pipeline** — passive OS-level intent inference
+surfacing proactive AI affordances. Full technical spec: `docs/thesis/ARCHITECTURE.md`.
+Each component below is a `Thesis-Component:` trailer value. All components are developed on the
+single `thesis` branch — do not create `thesis/*` component branches (`docs/GIT_WORKFLOW.md` §4).
 
-| Component (`Thesis-Component:` value) | Description | Status | Branch | Key files |
-|---|---|---|---|---|
-| _(tbd)_ | _first feature — fill in when we start it_ | planned | `thesis` | — |
+| Component (`Thesis-Component:` value) | Description | Status | Key files |
+|---|---|---|---|
+| `infrastructure` | branch/PR/workflow scaffolding, architecture spec | ongoing | `docs/GIT_WORKFLOW.md`, `docs/thesis/ARCHITECTURE.md` |
+| `signal-capture` | L1 sensors (clipboard, app focus, dwell/scroll, AX selection), SignalBus, trace recording + replay harness | **M1 done · M2 AX sensor added** | `MacNotchAI/Intent/` |
+| `intent-scoring` | L2 feature detectors (8) + L3 log-linear Bayes scorer with editable `IntentConfig`; LLM disambiguator pending (M4) | **in progress (M2 core done)** | `MacNotchAI/Intent/` |
+| `affordance-ui` | whisper panel (passive channel), summon ticker (active channel), AffordancePolicy + TaskResolver, affordance outcome log | **in progress (M3 core done — translation e2e)** | `MacNotchAI/Intent/Policy/`, `MacNotchAI/Intent/UI/` |
+| `personalization` | online weight learning, per-context prior offsets | planned (M4) | — |
+| `user-control` | sensitivity tiers, preference compiler (NL → config), onboarding | planned (M4) | — |
+| `study-instrumentation` | telemetry schema, study-mode switcher, in-situ prompts, export | planned (M5) | — |
 
 ---
 
