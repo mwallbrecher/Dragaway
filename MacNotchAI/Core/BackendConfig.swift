@@ -14,6 +14,16 @@ enum BackendConfig {
     // TODO: paste after backend setup. Keep `nil` to stay BYOK-only.
     static let proxyBaseURL = URL(string: "https://aidrop.aidrop.workers.dev")
 
+    /// Base URL of the SHARE worker — a separate, open-source service from the AI proxy
+    /// above (see `docs/SHARE_ARCHITECTURE.md` §4). Companies can self-host and point this
+    /// at their own instance; the server only ever sees ciphertext.
+    /// Keep `nil` to hide the sharing UI entirely.
+    // TODO: paste after deploying worker-share/.
+    static let shareBaseURL: URL? = nil
+
+    /// True once the share service is configured. Gates the Expose/Join affordances.
+    static var isSharingAvailable: Bool { shareBaseURL != nil }
+
     /// Paddle-hosted checkout URL opened by "Upgrade". Opened in the browser.
     // TODO: paste after payment setup.
     static let paddleCheckoutURL: URL? = nil

@@ -1,0 +1,32 @@
+# Dragaway Share — relay for exposed sessions. MIT licensed, self-hostable.
+#
+# Setup:
+#   npm i -g wrangler && wrangler login
+#   wrangler kv namespace create SHARES        # paste the id below
+#   wrangler d1 create dragaway-share          # paste the database_id below
+#   wrangler d1 execute dragaway-share --remote --file=./schema.sql
+#   wrangler deploy
+# Then paste the deployed https://… URL into BackendConfig.shareBaseURL.
+#
+# This service is intentionally separate from the AI metering proxy in ../worker:
+# different job, different bindings, different licence.
+
+name = "dragaway-share"
+main = "src/index.js"
+compatibility_date = "2025-01-01"
+
+# Ciphertext payloads. KV expires values itself (expirationTtl), so the common case
+# needs no cleanup job at all.
+[[kv_namespaces]]
+binding = "SHARES"
+id = "PASTE_KV_NAMESPACE_ID"
+
+# Share metadata (attempt/fetch counters, expiry).
+[[d1_databases]]
+binding = "DB"
+database_name = "dragaway-share"
+database_id = "PASTE_D1_DATABASE_ID"
+
+# Hourly sweep of expired metadata — precise TTL for shares nobody ever fetched.
+[triggers]
+crons = ["0 * * * *"]

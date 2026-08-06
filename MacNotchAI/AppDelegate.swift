@@ -9,6 +9,8 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var hotkeyPickerWindow: NSWindow?
     private var sessionSearchWindow: NSWindow?
     private var feedbackWindow: NSWindow?
+    private var exposeWindow: NSWindow?
+    private var joinWindow: NSWindow?
     private var tutorialWindow: NSWindow?
     private var settingsWindow: NSWindow?
     private var startupToastWindow: NSPanel?
@@ -422,6 +424,17 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let updateItem = addItem(to: menu, title: "Check for Updates…", action: #selector(menuCheckUpdates))
         updateItem.isEnabled = UpdaterController.shared.canCheckForUpdates
 
+        // ── Session sharing (hidden entirely until a share service is configured) ──
+        if BackendConfig.isSharingAvailable {
+            menu.addItem(.separator())
+            let expose = addItem(to: menu, title: "Expose Session…", action: #selector(menuExposeSession))
+            // Only meaningful when a session with a real file is on screen.
+            expose.isEnabled = currentSessionFileURL() != nil
+            addItem(to: menu, title: "Join Session…", action: #selector(menuJoinSession))
+        }
+
+        menu.addItem(.separator())
+
         addItem(to: menu, title: "Help & Tutorial…", action: #selector(menuHelp))
         addItem(to: menu, title: "Send Feedback…", action: #selector(menuFeedback))
 
@@ -788,6 +801,70 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     /// Open (or re-focus) the Feedback window. Same managed-NSWindow pattern as the
     /// hotkey picker / session search.
+    // MARK: - Session sharing (docs/SHARE_ARCHITECTURE.md)
+
+    @objc private func menuExposeSession() { showExposeSession() }
+    @objc private func menuJoinSession()   { showJoinSession() }
+
+    /// The file backing the session currently on screen, if any. Sharing needs a real
+    /// on-disk file — a session that never received one cannot be exposed.
+    private func currentSessionFileURL() -> URL? {
+        guard let url = OverlayViewModel.shared.stage.fileURL,
+              FileManager.default.fileExists(atPath: url.path) else { return nil }
+        return url
+    }
+
+    /// Turns of the session on screen, so the recipient inherits the AI history.
+    private func currentSessionTurns() -> [SessionTurn] {
+        guard let url = currentSessionFileURL() else { return [] }
+        return SessionHistoryStore.shared.sessions
+            .first { $0.primaryPath == url.path }?.turns ?? []
+    }
+
+    func showExposeSession() {
+        guard let fileURL = currentSessionFileURL() else { NSSound.beep(); return }
+        let turns = currentSessionTurns()
+
+        if exposeWindow == nil {
+            let hosting = NSHostingController(rootView: ExposeSessionView(
+                fileURL: fileURL, turns: turns) { [weak self] in
+                    self?.exposeWindow?.close()
+                    self?.exposeWindow = nil
+                })
+            let win = NSWindow(contentViewController: hosting)
+            win.title = "Expose Session"
+            win.styleMask = [.titled, .closable]
+            win.isReleasedWhenClosed = false
+            win.center()
+            exposeWindow = win
+        }
+        exposeWindow?.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
+    }
+
+    func showJoinSession() {
+        if joinWindow == nil {
+            let hosting = NSHostingController(rootView: JoinSessionView(
+                onImported: { [weak self] url in
+                    // Land the imported file in a normal session — from here it is an
+                    // ordinary Dragaway session on the recipient's own provider/key.
+                    self?.openSessionWithFiles([url])
+                },
+                onClose: { [weak self] in
+                    self?.joinWindow?.close()
+                    self?.joinWindow = nil
+                }))
+            let win = NSWindow(contentViewController: hosting)
+            win.title = "Join Session"
+            win.styleMask = [.titled, .closable]
+            win.isReleasedWhenClosed = false
+            win.center()
+            joinWindow = win
+        }
+        joinWindow?.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
+    }
+
     func showFeedback() {
         if feedbackWindow == nil {
             let hosting = NSHostingController(rootView: FeedbackView { [weak self] in
