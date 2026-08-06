@@ -70,3 +70,8 @@ Secrets.plist
 .idea/
 .vscode/
 AiDropPopUp.gif
+
+# ── Cloudflare Workers ────────────────────────────────────────────────────────
+# Local wrangler state/cache (per-machine, regenerated on demand).
+.wrangler/
+node_modules/
