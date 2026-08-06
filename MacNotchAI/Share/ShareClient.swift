@@ -24,6 +24,7 @@ enum ShareClient {
         case tooLarge(Int)
         case notFound
         case locked
+        case rateLimited
         case expired
         case server(String)
         case offline
@@ -36,6 +37,8 @@ enum ShareClient {
                 return "This file is too large to share (limit \(limit))."
             case .notFound: return "No session found for that code."
             case .locked:   return "Too many wrong attempts — this code is locked."
+            case .rateLimited:
+                return "You've shared a lot in the last hour. Try again shortly."
             case .expired:  return "That share has expired."
             case .offline:  return "No connection to the sharing service."
             case .server(let m): return m
@@ -134,7 +137,8 @@ enum ShareClient {
         case 200...299: return json
         case 404:       throw ShareError.notFound
         case 410:       throw ShareError.expired
-        case 423, 429:  throw ShareError.locked
+        case 423:       throw ShareError.locked
+        case 429:       throw ShareError.rateLimited
         default:
             throw ShareError.server(json["error"] as? String ?? "Sharing failed (\(status)).")
         }

@@ -20,3 +20,15 @@ CREATE TABLE IF NOT EXISTS shares (
 );
 
 CREATE INDEX IF NOT EXISTS idx_shares_expiry ON shares (expires_at);
+
+-- Per-device, per-hour create counter — the abuse guard on POST /v1/share.
+-- The endpoint is public by necessity (the app must reach it), so without this a
+-- script could fill the namespace. Swept by the same hourly cron as `shares`.
+CREATE TABLE IF NOT EXISTS create_usage (
+  device_id TEXT NOT NULL,
+  hour      TEXT NOT NULL,          -- 'YYYY-MM-DDTHH' in UTC
+  count     INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY (device_id, hour)
+);
+
+CREATE INDEX IF NOT EXISTS idx_create_usage_hour ON create_usage (hour);

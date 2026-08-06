@@ -994,18 +994,13 @@ private struct ChipsColumnView: View {
         defer { editingOutputPath = false; outputFieldFocused = false }
         let typed = outputPathDraft.trimmingCharacters(in: .whitespacesAndNewlines)
         if typed.isEmpty { vm.sessionOutputOverride = .sibling; return }
-        let expanded = (typed as NSString).expandingTildeInPath
-        let fm = FileManager.default
-        var isDir: ObjCBool = false
-        if fm.fileExists(atPath: expanded, isDirectory: &isDir), isDir.boolValue {
-            vm.sessionOutputOverride = .folder(URL(fileURLWithPath: expanded))
-            return
-        }
-        // Not an existing directory — fall back to the parent if that's a real folder (so the
-        // user can edit the trailing name; producers derive the actual filename themselves).
-        let parent = (expanded as NSString).deletingLastPathComponent
-        if !parent.isEmpty, fm.fileExists(atPath: parent, isDirectory: &isDir), isDir.boolValue {
-            vm.sessionOutputOverride = .folder(URL(fileURLWithPath: parent))
+
+        // PathInput strips what real paste sources add — quotes (straight and curly),
+        // file:// URLs, Terminal-style `\ ` escapes, invisible characters — and falls back
+        // to the parent folder. Previously a pasted '…' path failed silently and the input
+        // was discarded, which looked like the field ignoring valid input.
+        if let dir = PathInput.resolveDirectory(typed) {
+            vm.sessionOutputOverride = .folder(dir)
             return
         }
         NSSound.beep()

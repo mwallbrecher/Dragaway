@@ -862,6 +862,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             let win = NSWindow(contentViewController: hosting)
             win.title = "Expose Session"
             win.styleMask = [.titled, .closable]
+            // Above the notch overlay: OverlayWindow is .floating, so a .normal window of our
+            // own app would open BEHIND it. Utility windows must sit on top when opened.
+            win.level = .floating + 1
             win.isReleasedWhenClosed = false
             win.center()
             exposeWindow = win
@@ -885,6 +888,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             let win = NSWindow(contentViewController: hosting)
             win.title = "Join Session"
             win.styleMask = [.titled, .closable]
+            // Above the notch overlay: OverlayWindow is .floating, so a .normal window of our
+            // own app would open BEHIND it. Utility windows must sit on top when opened.
+            win.level = .floating + 1
             win.isReleasedWhenClosed = false
             win.center()
             joinWindow = win
@@ -902,6 +908,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             let win = NSWindow(contentViewController: hosting)
             win.title = "Send Feedback"
             win.styleMask = [.titled, .closable]
+            // Above the notch overlay: OverlayWindow is .floating, so a .normal window of our
+            // own app would open BEHIND it. Utility windows must sit on top when opened.
+            win.level = .floating + 1
             win.isReleasedWhenClosed = false
             win.center()
             feedbackWindow = win
@@ -922,6 +931,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             let win = NSWindow(contentViewController: hosting)
             win.title = "Search Sessions"
             win.styleMask = [.titled, .closable]
+            // Above the notch overlay: OverlayWindow is .floating, so a .normal window of our
+            // own app would open BEHIND it. Utility windows must sit on top when opened.
+            win.level = .floating + 1
             win.isReleasedWhenClosed = false
             win.center()
             sessionSearchWindow = win
@@ -1273,6 +1285,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 NSHostingController(rootView: TutorialView(controller: controller)))
             win.title = "Welcome to Dragaway"
             win.styleMask = [.titled, .closable]
+            // Above the notch overlay: OverlayWindow is .floating, so a .normal window of our
+            // own app would open BEHIND it. Utility windows must sit on top when opened.
+            win.level = .floating + 1
             win.isReleasedWhenClosed = false
             win.level = .floating
             win.center()
@@ -1724,6 +1739,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         if settingsWindow == nil {
             let win = NSWindow(contentViewController: hosting)
             win.styleMask = [.titled, .closable]
+            // Above the notch overlay: OverlayWindow is .floating, so a .normal window of our
+            // own app would open BEHIND it. Utility windows must sit on top when opened.
+            win.level = .floating + 1
             win.isReleasedWhenClosed = false   // reuse the instance on reopen
             settingsWindow = win
         } else {
@@ -1804,6 +1822,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             let win = NSWindow(contentViewController: hosting)
             win.title = "Drag Hotkeys"
             win.styleMask = [.titled, .closable]
+            // Above the notch overlay: OverlayWindow is .floating, so a .normal window of our
+            // own app would open BEHIND it. Utility windows must sit on top when opened.
+            win.level = .floating + 1
             win.isReleasedWhenClosed = false
             win.center()
             hotkeyPickerWindow = win
@@ -1847,6 +1868,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             let win = NSWindow(contentViewController: hosting)
             win.title = "Welcome to Dragaway"
             win.styleMask = [.titled, .closable]
+            // Above the notch overlay: OverlayWindow is .floating, so a .normal window of our
+            // own app would open BEHIND it. Utility windows must sit on top when opened.
+            win.level = .floating + 1
             win.isReleasedWhenClosed = false
             win.center()
             onboardingWindow = win

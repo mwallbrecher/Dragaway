@@ -17,6 +17,10 @@ const TTL_SECONDS = 24 * 60 * 60;   // 24 h — matches the app's disclosure tex
 const MAX_BYTES = 25 * 1024 * 1024; // keep in sync with ShareBundle.maxFileBytes
 const MAX_ATTEMPTS = 10;            // wrong-code guesses before a share locks
 const MAX_FETCHES = 5;              // successful downloads before it stops serving
+const MAX_CREATES_PER_HOUR = 50;    // per device — the endpoint is public by necessity,
+                                    // so creation needs a ceiling. Far above real use
+                                    // (a person shares a handful a day) but low enough
+                                    // that a script cannot fill the namespace.
 
 export default {
   async fetch(request, env) {
@@ -49,12 +53,19 @@ export default {
   async scheduled(_event, env) {
     await env.DB.prepare("DELETE FROM shares WHERE expires_at < ?")
       .bind(Math.floor(Date.now() / 1000)).run();
+    // Rate-limit counters are only meaningful for the current hour; drop older rows so
+    // the table cannot grow without bound.
+    const prevHour = new Date(Date.now() - 3600_000).toISOString().slice(0, 13);
+    await env.DB.prepare("DELETE FROM create_usage WHERE hour < ?").bind(prevHour).run();
   },
 };
 
 // ── endpoints ────────────────────────────────────────────────────────────────
 
 async function createShare(request, env) {
+  const limited = await enforceCreateLimit(request, env);
+  if (limited) return limited;
+
   const body = await request.json();
   const { payload, tier, key, salt, file_name, has_password } = body || {};
 
@@ -121,6 +132,36 @@ async function revokeShare(code, env) {
 }
 
 // ── helpers ──────────────────────────────────────────────────────────────────
+
+/**
+ * Per-device hourly ceiling on share creation. Returns a 429 Response when the caller is
+ * over the limit, otherwise null (and counts the request).
+ *
+ * Identity is the app's X-Device-Id, falling back to the connecting IP so a caller that
+ * omits the header cannot bypass the limit entirely. Neither is a strong identity — this
+ * is a spam brake, not authentication.
+ */
+async function enforceCreateLimit(request, env) {
+  const device = request.headers.get("X-Device-Id")
+    || request.headers.get("CF-Connecting-IP")
+    || "unknown";
+  const hour = new Date().toISOString().slice(0, 13);   // 'YYYY-MM-DDTHH' UTC
+
+  const row = await env.DB.prepare(
+    "SELECT count FROM create_usage WHERE device_id = ? AND hour = ?"
+  ).bind(device, hour).first();
+
+  if (row && row.count >= MAX_CREATES_PER_HOUR) {
+    return json({ error: "Too many shares created. Try again later." }, 429);
+  }
+
+  await env.DB.prepare(
+    `INSERT INTO create_usage (device_id, hour, count) VALUES (?, ?, 1)
+     ON CONFLICT(device_id, hour) DO UPDATE SET count = count + 1`
+  ).bind(device, hour).run();
+
+  return null;
+}
 
 /** CSPRNG, never sequential; retries on the (rare) collision with a live share. */
 async function freshCode(env) {
