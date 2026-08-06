@@ -18,8 +18,7 @@ enum BackendConfig {
     /// above (see `docs/SHARE_ARCHITECTURE.md` §4). Companies can self-host and point this
     /// at their own instance; the server only ever sees ciphertext.
     /// Keep `nil` to hide the sharing UI entirely.
-    // TODO: paste after deploying worker-share/.
-    static let shareBaseURL: URL? = nil
+    static let shareBaseURL = URL(string: "https://dragaway-share.aidrop.workers.dev")
 
     /// True once the share service is configured. Gates the Expose/Join affordances.
     static var isSharingAvailable: Bool { shareBaseURL != nil }

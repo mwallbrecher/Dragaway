@@ -19,13 +19,13 @@ compatibility_date = "2025-01-01"
 # needs no cleanup job at all.
 [[kv_namespaces]]
 binding = "SHARES"
-id = "PASTE_KV_NAMESPACE_ID"
+id = "d110d6c4a3034e1289e032061d9585de"
 
 # Share metadata (attempt/fetch counters, expiry).
 [[d1_databases]]
 binding = "DB"
 database_name = "dragaway-share"
-database_id = "PASTE_D1_DATABASE_ID"
+database_id = "b792f03f-c9c6-453e-90e7-9d2b0bcb7966"
 
 # Hourly sweep of expired metadata — precise TTL for shares nobody ever fetched.
 [triggers]
