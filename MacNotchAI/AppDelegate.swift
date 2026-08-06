@@ -25,6 +25,11 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     /// the keystroke so the combo never leaks into the frontmost app. Live only while
     /// clipboard tracking is enabled.
     private let clipboardHotkey = GlobalHotkey()
+    /// ⌃⌘E / ⌃⌘J — session sharing. Registered ONLY when a share service is configured:
+    /// a Carbon hotkey swallows the combination system-wide, so claiming it while the
+    /// feature cannot work would silently break those keys in every other app.
+    private let exposeHotkey = GlobalHotkey()
+    private let joinHotkey   = GlobalHotkey()
     /// ⌃⌘N — open a new session from the current clipboard (text / image / files).
     private let sessionHotkey = GlobalHotkey()
 
@@ -100,6 +105,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
         // Capture features: ⌃⌘N clipboard→session hotkey + screenshot→session watcher.
         armCaptureFeatures()
+
+        // Session sharing: ⌃⌘E expose / ⌃⌘J join.
+        armSharingHotkeys()
         NotificationCenter.default.addObserver(
             self, selector: #selector(handleCaptureSettingsChanged),
             name: .captureSettingsChanged, object: nil
@@ -427,10 +435,11 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // ── Session sharing (hidden entirely until a share service is configured) ──
         if BackendConfig.isSharingAvailable {
             menu.addItem(.separator())
-            let expose = addItem(to: menu, title: "Expose Session…", action: #selector(menuExposeSession))
+            let expose = addItem(to: menu, title: "Expose Session…  ⌃⌘E",
+                                 action: #selector(menuExposeSession))
             // Only meaningful when a session with a real file is on screen.
             expose.isEnabled = currentSessionFileURL() != nil
-            addItem(to: menu, title: "Join Session…", action: #selector(menuJoinSession))
+            addItem(to: menu, title: "Join Session…  ⌃⌘J", action: #selector(menuJoinSession))
         }
 
         menu.addItem(.separator())
@@ -805,6 +814,25 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     @objc private func menuExposeSession() { showExposeSession() }
     @objc private func menuJoinSession()   { showJoinSession() }
+
+    /// Claim ⌃⌘E / ⌃⌘J only while sharing is actually available. Both are Carbon
+    /// hotkeys: they consume the keystroke system-wide, so an unusable registration
+    /// would break those combinations everywhere else on the Mac.
+    private func armSharingHotkeys() {
+        guard BackendConfig.isSharingAvailable else {
+            exposeHotkey.unregister()
+            joinHotkey.unregister()
+            return
+        }
+        exposeHotkey.register(keyCode: UInt32(kVK_ANSI_E),
+                              modifiers: UInt32(cmdKey | controlKey)) { [weak self] in
+            self?.showExposeSession()
+        }
+        joinHotkey.register(keyCode: UInt32(kVK_ANSI_J),
+                            modifiers: UInt32(cmdKey | controlKey)) { [weak self] in
+            self?.showJoinSession()
+        }
+    }
 
     /// The file backing the session currently on screen, if any. Sharing needs a real
     /// on-disk file — a session that never received one cannot be exposed.

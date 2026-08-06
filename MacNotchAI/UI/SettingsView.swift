@@ -270,6 +270,10 @@ struct SettingsView: View {
                 VStack(alignment: .leading, spacing: 8) {
                     helpRow("⌃⌘V",       "Clipboard history picker (last 10)")
                     helpRow("⌃⌘N",       "New session from the current clipboard")
+                    if BackendConfig.isSharingAvailable {
+                        helpRow("⌃⌘E",   "Expose the current session — share it with a colleague")
+                        helpRow("⌃⌘J",   "Join a session with a 6-digit code")
+                    }
                     helpRow("⌥1 … ⌥9",   "Open the dropped file in a favorite app")
                     helpRow("Tab / ⇧Tab", "Cycle the session card's tabs")
                     helpRow("⇧ + drag",  "Radial launcher (change under Add Hotkey…)")
